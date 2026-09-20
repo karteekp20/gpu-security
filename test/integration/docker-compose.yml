@@ -1,0 +1,140 @@
+# Deliberately insecure AI infrastructure, for testing ray-guard's detections
+# against real services rather than hand-written stubs.
+#
+# EVERY SERVICE HERE IS INTENTIONALLY MISCONFIGURED. Do not copy any of this
+# into anything that touches a real network. It exists so that RG-RAY-001 and
+# friends are proven against software that actually behaves like Ray, instead
+# of against a mock that returns whatever we assumed Ray returns.
+#
+# Fidelity is mixed, and the split is deliberate rather than convenient:
+#
+#   REAL SERVICES  - ray, jupyter, mlflow, ollama. All run CPU-only, so they
+#                    are the genuine article here.
+#   FIXTURES       - vllm, triton. Both ship GPU-bound, multi-gigabyte images
+#                    that cannot run on a CPU-only host. They are represented
+#                    by servers replaying the documented response shapes of
+#                    their health endpoints, and are labelled as fixtures in
+#                    the test output so nobody mistakes them for coverage.
+#   LISTENER       - slurmctld. RG-SLURM-001 is a reachability-only check, so
+#                    a bare TCP listener is a faithful stand-in, not a
+#                    compromise.
+#
+# The `control-*` services are the other half of the test: correctly
+# configured services that MUST NOT raise a finding. A scanner that cannot
+# tell a secured service from an exposed one is worse than no scanner, and
+# false positives are how a security tool loses a customer.
+
+name: ray-guard-integration
+
+networks:
+  default:
+    name: ray-guard-integration
+    ipam:
+      config:
+        # Pinned so the -cidr discovery test has a known range to sweep.
+        - subnet: 172.31.77.0/24
+
+services:
+  # ---------------------------------------------------------------- REAL ----
+
+  # The flagship detection. Ray's dashboard bound to all interfaces with no
+  # authentication is CVE-2023-48022 / CVE-2025-62593 - the ShadowRay
+  # exposure. If RG-RAY-001 does not fire here, the product does not work.
+  ray:
+    image: rayproject/ray:2.9.0-py310
+    command: >
+      ray start --head
+      --dashboard-host=0.0.0.0
+      --dashboard-port=8265
+      --port=6379
+      --ray-client-server-port=10001
+      --block
+    networks:
+      default:
+        ipv4_address: 172.31.77.10
+    shm_size: 512mb
+
+  jupyter:
+    image: quay.io/jupyter/base-notebook:latest
+    command: >
+      start-notebook.py
+      --IdentityProvider.token=''
+      --PasswordIdentityProvider.hashed_password=''
+      --ServerApp.ip=0.0.0.0
+    networks:
+      default:
+        ipv4_address: 172.31.77.11
+
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.9.2
+    command: mlflow server --host 0.0.0.0 --port 5000
+    networks:
+      default:
+        ipv4_address: 172.31.77.12
+
+  ollama:
+    image: ollama/ollama:latest
+    networks:
+      default:
+        ipv4_address: 172.31.77.13
+
+  # ------------------------------------------------------------ FIXTURES ----
+  # GPU-bound images; these replay documented health-endpoint shapes only.
+
+  vllm:
+    image: python:3.11-alpine
+    working_dir: /fixtures
+    volumes:
+      - ./fixtures:/fixtures:ro
+    command: ["python", "/fixtures/shape_server.py", "vllm", "8000"]
+    networks:
+      default:
+        ipv4_address: 172.31.77.20
+
+  triton:
+    image: python:3.11-alpine
+    working_dir: /fixtures
+    volumes:
+      - ./fixtures:/fixtures:ro
+    command: ["python", "/fixtures/shape_server.py", "triton", "8002"]
+    networks:
+      default:
+        ipv4_address: 172.31.77.21
+
+  # ------------------------------------------------------------ LISTENER ----
+
+  slurmctld:
+    image: alpine:3.19
+    command: ["nc", "-lk", "-p", "6817", "-e", "/bin/true"]
+    networks:
+      default:
+        ipv4_address: 172.31.77.30
+
+  # ------------------------------------------------------- NEGATIVE CASES ----
+  # Correctly configured. A service-exposure finding against either of these
+  # is a false positive.
+
+  # Authentication enforced on every path. The vLLM exposure rule must NOT
+  # fire against it. It will still raise RG-TLS-002, because auth over
+  # plaintext really is a finding - credentials cross the wire in the clear -
+  # and the test asserts exactly that and nothing more.
+  control-secured:
+    image: python:3.11-alpine
+    working_dir: /fixtures
+    volumes:
+      - ./fixtures:/fixtures:ro
+    command: ["python", "/fixtures/shape_server.py", "secured", "8000"]
+    networks:
+      default:
+        ipv4_address: 172.31.77.40
+
+  # Bound to loopback inside its own namespace: reachable from nowhere.
+  control-loopback:
+    image: python:3.11-alpine
+    working_dir: /fixtures
+    volumes:
+      - ./fixtures:/fixtures:ro
+    command: ["python", "/fixtures/shape_server.py", "loopback", "8265"]
+    networks:
+      default:
+        ipv4_address: 172.31.77.41

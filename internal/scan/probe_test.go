@@ -171,6 +171,66 @@ func TestTLSProbeRecordsNoCertificateIdentity(t *testing.T) {
 	}
 }
 
+// Regression: a server that accepts the connection and then waits silently
+// for a complete HTTP request - real Jupyter and MLflow both do this - used
+// to burn the entire probe timeout before we concluded "not TLS". Every such
+// port on a cluster paid that cost. The handshake must be bounded separately.
+func TestTLSProbeGivesUpQuicklyOnAcceptAndHang(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer l.Close()
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			// Hold the connection open, say nothing - the pathological case.
+			go func() { <-done; c.Close() }()
+		}
+	}()
+	_, portStr, _ := net.SplitHostPort(l.Addr().String())
+	port, _ := strconv.Atoi(portStr)
+
+	const probeTimeout = 8 * time.Second
+	s := NewWithChecks(probeTimeout, nil)
+
+	start := time.Now()
+	state := s.tlsProbe(context.Background(), "127.0.0.1", port)
+	elapsed := time.Since(start)
+
+	if state.Enabled {
+		t.Errorf("a silent TCP listener is not a TLS service: %+v", state)
+	}
+	if elapsed >= probeTimeout {
+		t.Errorf("the TLS handshake consumed the whole probe timeout (%v); it must be bounded separately", elapsed)
+	}
+	if max := s.handshakeTimeout() * 2; elapsed > max {
+		t.Errorf("handshake took %v, expected it bounded near %v", elapsed, s.handshakeTimeout())
+	}
+}
+
+func TestHandshakeTimeoutIsClamped(t *testing.T) {
+	cases := []struct {
+		probe time.Duration
+		want  time.Duration
+	}{
+		{500 * time.Millisecond, 500 * time.Millisecond}, // never exceed the caller's timeout
+		{2 * time.Second, time.Second},                   // floor
+		{4 * time.Second, 2 * time.Second},               // default: half
+		{30 * time.Second, 3 * time.Second},              // ceiling
+	}
+	for _, tc := range cases {
+		if got := NewWithChecks(tc.probe, nil).handshakeTimeout(); got != tc.want {
+			t.Errorf("probe timeout %v: want handshake %v, got %v", tc.probe, tc.want, got)
+		}
+	}
+}
+
 func TestTLSProbeOnPlaintextPort(t *testing.T) {
 	host, port := serve(t, func(w http.ResponseWriter, r *http.Request) {})
 	state := NewWithChecks(2*time.Second, nil).tlsProbe(context.Background(), host, port)

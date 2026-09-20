@@ -1,0 +1,336 @@
+//go:build integration
+
+// Package integration exercises ray-guard against services that actually run,
+// rather than against stubs returning whatever status code we assumed.
+//
+// This matters more than it sounds. RG-RAY-001 carries the entire ShadowRay
+// pitch, and a unit test proves only that our detection logic agrees with our
+// own mock. If real Ray redirected, served a SPA shell, or answered on a
+// different path, every unit test would still pass and the detection would
+// misfire during a buyer-led assessment. These tests close that gap.
+//
+// Run with: make test-integration
+// (Never part of `go test ./...` - the images are multi-gigabyte.)
+package integration
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"os/exec"
+	"strings"
+	"testing"
+	"time"
+
+	"gpusecurity/internal/domain"
+	"gpusecurity/internal/scan"
+)
+
+// Addresses are pinned in docker-compose.yml so tests can target a service
+// directly and -cidr discovery has a known range.
+const (
+	subnet = "172.31.77.0/24"
+
+	addrRay      = "172.31.77.10"
+	addrJupyter  = "172.31.77.11"
+	addrMLflow   = "172.31.77.12"
+	addrOllama   = "172.31.77.13"
+	addrVLLM     = "172.31.77.20"
+	addrTriton   = "172.31.77.21"
+	addrSlurm    = "172.31.77.30"
+	addrSecured  = "172.31.77.40"
+	addrLoopback = "172.31.77.41"
+)
+
+const probeTimeout = 5 * time.Second
+
+// fixtureServices are represented by replayed response shapes rather than the
+// real software, because their images are GPU-bound. Named here so the test
+// output says so out loud instead of implying coverage we do not have.
+var fixtureServices = map[string]string{
+	addrVLLM:   "vLLM (fixture: GPU-only image)",
+	addrTriton: "Triton (fixture: GPU-only image)",
+	addrSlurm:  "Slurm (fixture: TCP listener; RG-SLURM-001 is reachability-only)",
+}
+
+func TestMain(m *testing.M) {
+	if os.Getenv("RAY_GUARD_INTEGRATION") == "" {
+		fmt.Println("set RAY_GUARD_INTEGRATION=1 (make test-integration) to run these")
+		os.Exit(0)
+	}
+	os.Exit(m.Run())
+}
+
+// scanHost probes one address with the default check set.
+func scanHost(t *testing.T, host string) []domain.Finding {
+	t.Helper()
+	s := scan.New(probeTimeout)
+	obs := s.ProbeHost(context.Background(), host)
+	return scan.Detect(obs)
+}
+
+func ruleIDs(findings []domain.Finding) []string {
+	var ids []string
+	for _, f := range findings {
+		ids = append(ids, f.RuleID)
+	}
+	return ids
+}
+
+func findRule(findings []domain.Finding, ruleID string) *domain.Finding {
+	for i := range findings {
+		if findings[i].RuleID == ruleID {
+			return &findings[i]
+		}
+	}
+	return nil
+}
+
+// ---------------------------------------------------------------------------
+// The flagship detection, against real Ray
+// ---------------------------------------------------------------------------
+
+// TestRealRayDashboardIsDetected is the single most important test in the
+// repo. Ray's dashboard bound to 0.0.0.0 without authentication is
+// CVE-2023-48022 / CVE-2025-62593 - the exposure ShadowRay exploited in the
+// wild. If this fails, the product's headline claim is false.
+func TestRealRayDashboardIsDetected(t *testing.T) {
+	findings := scanHost(t, addrRay)
+
+	ray := findRule(findings, "RG-RAY-001")
+	if ray == nil {
+		t.Fatalf("RG-RAY-001 did not fire against REAL Ray; got %v", ruleIDs(findings))
+	}
+	if ray.Severity != domain.Critical {
+		t.Errorf("unauthenticated Ray must be critical, got %s", ray.Severity)
+	}
+	if ray.Port != 8265 {
+		t.Errorf("expected the dashboard on 8265, got %d", ray.Port)
+	}
+	if len(ray.CVEs) != 2 {
+		t.Errorf("RG-RAY-001 must carry the ShadowRay CVEs, got %v", ray.CVEs)
+	}
+	if ray.Remediation == "" {
+		t.Error("a critical finding without remediation text is not actionable")
+	}
+
+	// Ray's client server port is a separate exposure.
+	if findRule(findings, "RG-RAY-002") == nil {
+		t.Errorf("expected the Ray client port to be flagged; got %v", ruleIDs(findings))
+	}
+}
+
+// TestRealRayGradesF checks the whole pipeline, not just the rule: a cluster
+// with an exposed Ray dashboard must come out at the bottom of the grading
+// matrix (CLAUDE.md 10.0) with a rationale that names the cause.
+func TestRealRayGradesF(t *testing.T) {
+	findings := scanHost(t, addrRay)
+	now := time.Now()
+	result := domain.NewScanResult(now.Add(-time.Second), now, 1, findings)
+
+	if result.Grade != "F" {
+		t.Errorf("an exposed Ray dashboard must grade F, got %s (score %d)", result.Grade, result.Score)
+	}
+	if result.ExitCode() != 6 {
+		t.Errorf("expected exit code 6 for a critical finding, got %d", result.ExitCode())
+	}
+	if !strings.Contains(result.GradeReason, "remote code execution") {
+		t.Errorf("the rationale should say what an exposed Ray dashboard means, got %q", result.GradeReason)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The other real services
+// ---------------------------------------------------------------------------
+
+func TestRealServicesAreDetected(t *testing.T) {
+	cases := []struct {
+		name   string
+		host   string
+		rule   string
+		minSev domain.Severity
+	}{
+		{"Jupyter (real)", addrJupyter, "RG-JUPYTER-001", domain.High},
+		{"MLflow (real)", addrMLflow, "RG-MLFLOW-001", domain.High},
+		{"Ollama (real)", addrOllama, "RG-OLLAMA-001", domain.Medium},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			findings := scanHost(t, tc.host)
+			f := findRule(findings, tc.rule)
+			if f == nil {
+				t.Fatalf("%s did not fire against %s; got %v", tc.rule, tc.name, ruleIDs(findings))
+			}
+			if domain.SeverityRank(f.Severity) > domain.SeverityRank(tc.minSev) {
+				t.Errorf("%s: expected at least %s, got %s", tc.rule, tc.minSev, f.Severity)
+			}
+		})
+	}
+}
+
+func TestFixtureServicesAreDetected(t *testing.T) {
+	cases := []struct {
+		host string
+		rule string
+	}{
+		{addrVLLM, "RG-VLLM-001"},
+		{addrTriton, "RG-TRITON-001"},
+		{addrSlurm, "RG-SLURM-001"},
+	}
+	for _, tc := range cases {
+		t.Run(fixtureServices[tc.host], func(t *testing.T) {
+			t.Logf("NOTE: %s - this is a replayed response shape, not the real service",
+				fixtureServices[tc.host])
+			findings := scanHost(t, tc.host)
+			if findRule(findings, tc.rule) == nil {
+				t.Errorf("%s did not fire; got %v", tc.rule, ruleIDs(findings))
+			}
+		})
+	}
+}
+
+// Triton shares port 8000 with vLLM. Each must be attributed to the host that
+// actually answers on its own health path - never both, never the wrong one.
+func TestSharedPortAttributionAgainstRunningServices(t *testing.T) {
+	vllm := scanHost(t, addrVLLM)
+	if findRule(vllm, "RG-TRITON-001") != nil {
+		t.Errorf("vLLM host was misattributed as Triton: %v", ruleIDs(vllm))
+	}
+	triton := scanHost(t, addrTriton)
+	if findRule(triton, "RG-VLLM-001") != nil {
+		t.Errorf("Triton host was misattributed as vLLM: %v", ruleIDs(triton))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Negative cases - false positives are how a security tool loses a customer
+// ---------------------------------------------------------------------------
+
+// A service that enforces authentication must not raise its exposure rule.
+// It does still raise RG-TLS-002, because auth over plaintext is a real
+// finding - so assert precisely that, and nothing more.
+func TestAuthenticatedServiceRaisesNoExposureFinding(t *testing.T) {
+	findings := scanHost(t, addrSecured)
+
+	if f := findRule(findings, "RG-VLLM-001"); f != nil {
+		t.Errorf("FALSE POSITIVE: an authenticated service was reported as exposed: %+v", f)
+	}
+	for _, f := range findings {
+		if f.Severity == domain.Critical || f.Severity == domain.High {
+			t.Errorf("FALSE POSITIVE: authenticated service produced a %s finding: %s",
+				f.Severity, f.RuleID)
+		}
+	}
+	if findRule(findings, "RG-TLS-002") == nil {
+		t.Errorf("expected plaintext auth to be flagged as RG-TLS-002; got %v", ruleIDs(findings))
+	}
+}
+
+// A service bound to loopback inside its own network namespace is reachable
+// from nowhere. Scanning it must produce nothing at all.
+func TestLoopbackBoundServiceIsInvisible(t *testing.T) {
+	findings := scanHost(t, addrLoopback)
+	if len(findings) != 0 {
+		t.Errorf("FALSE POSITIVE: a loopback-bound service was reported as reachable: %v",
+			ruleIDs(findings))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Discovery
+// ---------------------------------------------------------------------------
+
+// The operator should not have to know the addresses. Sweeping the subnet
+// must find the exposed services on its own - this is how a real assessment
+// starts.
+func TestCIDRDiscoveryFindsTheStack(t *testing.T) {
+	hosts, err := scan.ExpandCIDR(subnet, false)
+	if err != nil {
+		t.Fatalf("expanding %s: %v", subnet, err)
+	}
+
+	s := scan.New(2 * time.Second)
+	var all []domain.Observation
+	results := make(chan []domain.Observation, len(hosts))
+	sem := make(chan struct{}, 64)
+	for _, h := range hosts {
+		h := h
+		go func() {
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			results <- s.ProbeHost(context.Background(), h)
+		}()
+	}
+	for range hosts {
+		all = append(all, <-results...)
+	}
+
+	findings := scan.Detect(all)
+	if findRule(findings, "RG-RAY-001") == nil {
+		t.Errorf("a subnet sweep missed the exposed Ray dashboard; found %v", ruleIDs(findings))
+	}
+
+	hostsFound := map[string]bool{}
+	for _, f := range findings {
+		hostsFound[f.Host] = true
+	}
+	if len(hostsFound) < 4 {
+		t.Errorf("expected the sweep to find at least 4 affected hosts, found %d: %v",
+			len(hostsFound), hostsFound)
+	}
+	if hostsFound[addrLoopback] {
+		t.Error("FALSE POSITIVE: the loopback-bound host was reported by the sweep")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// P3, against real responses
+// ---------------------------------------------------------------------------
+
+// The unit suite proves no payload escapes from a server we wrote. This
+// proves it against what real Ray, Jupyter, MLflow and Ollama actually send -
+// including their headers, error pages, and SPA shells.
+func TestNoPayloadFromRealServicesReachesFindings(t *testing.T) {
+	hosts := []string{addrRay, addrJupyter, addrMLflow, addrOllama}
+
+	s := scan.New(probeTimeout)
+	var obs []domain.Observation
+	for _, h := range hosts {
+		obs = append(obs, s.ProbeHost(context.Background(), h)...)
+	}
+	findings := scan.Detect(obs)
+	if len(findings) == 0 {
+		t.Fatal("precondition failed: no findings, so this test would pass vacuously")
+	}
+
+	rendered := fmt.Sprintf("%#v%#v", obs, findings)
+
+	// Markers that only appear in real service response bodies: Ray's
+	// dashboard HTML, Jupyter's API JSON, MLflow's SPA, Ollama's model list.
+	for _, marker := range []string{
+		"<!DOCTYPE", "<!doctype", "<html", "<script", "<body",
+		"\"models\"", "\"version\"", "static/js", "favicon",
+	} {
+		if strings.Contains(rendered, marker) {
+			t.Errorf("P3 VIOLATION: response content %q from a real service reached our structures", marker)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Compose sanity
+// ---------------------------------------------------------------------------
+
+// If the stack is not actually up, every test above would fail for the wrong
+// reason. Fail loudly and early instead.
+func TestComposeStackIsUp(t *testing.T) {
+	out, err := exec.Command("docker", "compose", "-f", "docker-compose.yml", "ps",
+		"--services", "--filter", "status=running").Output()
+	if err != nil {
+		t.Skipf("could not query compose state: %v", err)
+	}
+	running := strings.Fields(string(out))
+	if len(running) < 6 {
+		t.Fatalf("expected the full stack to be running, got %d services: %v", len(running), running)
+	}
+}

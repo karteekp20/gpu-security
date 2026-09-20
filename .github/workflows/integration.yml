@@ -1,0 +1,36 @@
+name: Integration (real services)
+
+# Deliberately NOT on pull_request. This stack pulls several gigabytes of
+# container images; making every PR wait on that would trade a lot of
+# developer time for a signal that changes rarely. Nightly plus on-demand
+# catches drift in the upstream images without taxing normal work.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 3 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          check-latest: true
+
+      - name: Run detections against real Ray, Jupyter, MLflow and Ollama
+        run: make test-integration
+
+      # Upstream images move. When Ray changes how its dashboard answers, we
+      # want the logs, because that is a detection bug in the making.
+      - name: Dump container logs on failure
+        if: failure()
+        run: |
+          cd test/integration
+          docker compose logs --tail=100 || true

@@ -264,12 +264,39 @@ func (s *Scanner) probeOpenPort(ctx context.Context, host string, port int, chec
 	return obs
 }
 
+// handshakeTimeout bounds the TLS handshake separately from the overall probe
+// timeout.
+//
+// A peer that speaks TLS answers a ClientHello within a round trip. A peer
+// that does not either rejects it immediately (Ray) or - and this is the case
+// that matters - accepts the connection and waits silently for a complete
+// HTTP request that will never come (Jupyter, MLflow, and plenty of others).
+// Without a separate bound, every such port costs the full -timeout before we
+// conclude "not TLS", which on a cluster with many plaintext ports is a large
+// and entirely wasted delay.
+//
+// So a short handshake deadline is the correct behaviour, not a compromise.
+func (s *Scanner) handshakeTimeout() time.Duration {
+	const floor, ceiling = time.Second, 3 * time.Second
+	d := s.timeout / 2
+	if d < floor {
+		d = floor
+	}
+	if d > ceiling {
+		d = ceiling
+	}
+	if d > s.timeout {
+		d = s.timeout
+	}
+	return d
+}
+
 // tlsProbe completes a TLS handshake and then verifies the presented chain
 // ourselves, so we can report *why* verification failed rather than just
 // "no TLS". We record only whether TLS is on, the failure class, and the
 // expiry date - never the subject, issuer CN, serial, or chain bytes (P3).
 func (s *Scanner) tlsProbe(ctx context.Context, host string, port int) domain.TLSState {
-	d := &net.Dialer{Timeout: s.timeout}
+	d := &net.Dialer{Timeout: s.handshakeTimeout()}
 	conn, err := tls.DialWithDialer(d, "tcp", net.JoinHostPort(host, strconv.Itoa(port)),
 		&tls.Config{InsecureSkipVerify: true})
 	if err != nil {
