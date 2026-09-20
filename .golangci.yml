@@ -1,0 +1,29 @@
+run:
+  timeout: 5m
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - gosec       # we are a security product; hold our own code to it (P8)
+    - misspell
+    - unconvert
+    - bodyclose   # a leaked response body is both a bug and a P3 smell
+
+linters-settings:
+  gosec:
+    excludes:
+      # G402: the scanner deliberately completes handshakes against
+      # untrusted certificates in order to REPORT that they are untrusted.
+      # Verification is then performed explicitly in tls.Probe (see
+      # internal/scan/probe.go). This is the product feature, not a lapse.
+      - G402
+
+issues:
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - gosec
