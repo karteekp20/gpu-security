@@ -2,6 +2,7 @@ package scan
 
 import (
 	"fmt"
+	"net/http"
 
 	"gpusecurity/internal/domain"
 )
@@ -24,6 +25,8 @@ var rules = map[string]ruleDef{
 		"Place vLLM behind an authenticated gateway; do not expose the API directly.", nil},
 	"triton": {"RG-TRITON-001", "Unauthenticated NVIDIA Triton server exposed", domain.High,
 		"Restrict Triton HTTP/gRPC endpoints to trusted networks; add an auth proxy.", nil},
+	"triton-grpc": {"RG-TRITON-003", "NVIDIA Triton gRPC endpoint reachable", domain.Medium,
+		"Restrict the Triton gRPC port (8001) to trusted networks; front it with an auth proxy.", nil},
 	"triton-metrics": {"RG-TRITON-002", "Triton metrics endpoint publicly reachable", domain.Low,
 		"Restrict the metrics port (8002) to your monitoring network.", nil},
 	"mlflow": {"RG-MLFLOW-001", "Unauthenticated MLflow server exposed", domain.High,
@@ -36,28 +39,83 @@ var rules = map[string]ruleDef{
 		"Restrict slurmctld (6817) to the cluster management network only.", nil},
 }
 
-// Detect turns benign observations into findings.
+var (
+	ruleTLSInvalid = ruleDef{"RG-TLS-001", "TLS certificate fails verification", domain.Medium,
+		"Replace the certificate with one issued by a trusted CA, matching the service hostname and within its validity window.", nil}
+	ruleTLSPlaintext = ruleDef{"RG-TLS-002", "Authenticated service served over plaintext HTTP", domain.Medium,
+		"Terminate TLS in front of this service; credentials sent to it currently traverse the network in the clear.", nil}
+	ruleBucketPublic = ruleDef{"RG-BUCKET-001", "Object storage bucket lists publicly", domain.High,
+		"Remove public-read/list permissions from the bucket and require authenticated access.", nil}
+	ruleUnknownExposure = ruleDef{"RG-EXPOSURE-001", "Unidentified service reachable on an AI-infrastructure port", domain.Info,
+		"Confirm what is listening on this port and whether it should be reachable from the scan vantage point.", nil}
+)
+
+// Detect turns benign observations into findings. It reasons only over
+// exposure, auth state, and transport posture - never over response content.
 func Detect(obs []domain.Observation) []domain.Finding {
 	var findings []domain.Finding
 	for _, o := range obs {
-		r, ok := rules[o.Service]
-		if !ok {
-			continue
-		}
-		if o.HTTPStatus == 0 {
-			findings = append(findings, mkFinding(r, o, fmt.Sprintf("Port %d reachable. %s", o.Port, o.Note)))
-			continue
-		}
-		if o.Unauth {
-			detail := fmt.Sprintf("HTTP %d without authentication on port %d", o.HTTPStatus, o.Port)
-			f := mkFinding(r, o, detail)
-			if !o.TLS {
-				f.Detail += " (no TLS)"
-			}
+		if f, ok := detectOne(o); ok {
 			findings = append(findings, f)
 		}
 	}
-	return findings
+	return domain.SortFindings(findings)
+}
+
+func detectOne(o domain.Observation) (domain.Finding, bool) {
+	switch o.Service {
+	case ServiceTLS:
+		if o.TLS.Issue == "" {
+			return domain.Finding{}, false
+		}
+		detail := fmt.Sprintf("Certificate on port %d is %s", o.Port, o.TLS.Issue)
+		if o.TLS.NotAfter != "" {
+			detail += fmt.Sprintf(" (expires %s)", o.TLS.NotAfter)
+		}
+		return mkFinding(ruleTLSInvalid, o, detail), true
+
+	case ServiceBucket:
+		if !o.Unauth {
+			return domain.Finding{}, false
+		}
+		return mkFinding(ruleBucketPublic, o,
+			fmt.Sprintf("Unauthenticated request to the bucket endpoint returned HTTP %d. "+
+				"Listing was not read - the status alone shows it is public.", o.HTTPStatus)), true
+
+	case ServiceUnknown:
+		detail := fmt.Sprintf("Port %d is open but no probe identified the service", o.Port)
+		if o.HTTPStatus > 0 {
+			detail += fmt.Sprintf(" (HTTP %d)", o.HTTPStatus)
+		}
+		return mkFinding(ruleUnknownExposure, o, detail), true
+	}
+
+	r, ok := rules[o.Service]
+	if !ok {
+		return domain.Finding{}, false
+	}
+
+	// A reachability-only (TCP) check: no HTTP response to reason about.
+	if o.HTTPStatus == 0 {
+		return mkFinding(r, o, fmt.Sprintf("Port %d reachable. %s", o.Port, o.Note)), true
+	}
+
+	if o.Unauth {
+		detail := fmt.Sprintf("HTTP %d without authentication on port %d", o.HTTPStatus, o.Port)
+		f := mkFinding(r, o, detail)
+		if !o.TLS.Enabled {
+			f.Detail += " (no TLS)"
+		}
+		return f, true
+	}
+
+	// Auth is enforced, but credentials cross the wire in plaintext.
+	if (o.HTTPStatus == http.StatusUnauthorized || o.HTTPStatus == http.StatusForbidden) && !o.TLS.Enabled {
+		return mkFinding(ruleTLSPlaintext, o,
+			fmt.Sprintf("%s on port %d requires authentication but is served over plaintext HTTP", o.Service, o.Port)), true
+	}
+
+	return domain.Finding{}, false
 }
 
 func mkFinding(r ruleDef, o domain.Observation, detail string) domain.Finding {

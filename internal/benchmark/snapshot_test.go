@@ -1,0 +1,123 @@
+package benchmark
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"gpusecurity/internal/domain"
+)
+
+func sample() domain.ScanResult {
+	findings := []domain.Finding{
+		{RuleID: "RG-RAY-001", Title: "Unauthenticated Ray dashboard", Severity: domain.Critical,
+			Host: "gpu-node-01.internal.example.com", Port: 8265, Service: "ray-dashboard",
+			Detail:      "HTTP 200 without authentication on port 8265",
+			Remediation: "Enable Ray authentication."},
+		{RuleID: "RG-OLLAMA-001", Title: "Unauthenticated Ollama API", Severity: domain.Medium,
+			Host: "gpu-node-01.internal.example.com", Port: 11434, Service: "ollama",
+			Detail: "HTTP 200 without authentication on port 11434"},
+	}
+	start := time.Date(2026, 9, 20, 14, 37, 12, 0, time.UTC)
+	return domain.NewScanResult(start, start.Add(9*time.Second), 3, findings)
+}
+
+func TestSnapshotOmitsRawHostnames(t *testing.T) {
+	snap, err := Build(sample(), time.Now())
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	b, err := json.Marshal(snap)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	for _, forbidden := range []string{
+		"gpu-node-01", "internal.example.com",
+		"HTTP 200 without authentication", // finding detail
+		"Enable Ray authentication",       // remediation text
+	} {
+		if strings.Contains(string(b), forbidden) {
+			t.Errorf("snapshot leaked %q:\n%s", forbidden, b)
+		}
+	}
+}
+
+func TestSnapshotKeepsAggregateMetadata(t *testing.T) {
+	snap, err := Build(sample(), time.Now())
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if snap.Schema != Schema {
+		t.Errorf("want schema %q, got %q", Schema, snap.Schema)
+	}
+	if snap.Grade != "F" || snap.SeverityCounts["critical"] != 1 {
+		t.Errorf("aggregate posture should survive anonymization, got %+v", snap)
+	}
+	if len(snap.Findings) != 2 {
+		t.Fatalf("want 2 records, got %d", len(snap.Findings))
+	}
+	if snap.Findings[0].RuleID != "RG-RAY-001" || snap.Findings[0].Port != 8265 {
+		t.Errorf("rule ID and port are metadata and must be kept: %+v", snap.Findings[0])
+	}
+}
+
+func TestSnapshotHostIDsStableWithinButNotAcrossSnapshots(t *testing.T) {
+	r := sample()
+	a, err := Build(r, time.Now())
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if a.Findings[0].HostID != a.Findings[1].HostID {
+		t.Error("the same host must hash identically within one snapshot")
+	}
+
+	b, err := Build(r, time.Now())
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if a.Findings[0].HostID == b.Findings[0].HostID {
+		t.Error("a single-use salt must make host IDs unlinkable across snapshots")
+	}
+}
+
+func TestSnapshotTimestampIsCoarse(t *testing.T) {
+	snap, err := Build(sample(), time.Date(2026, 9, 20, 14, 37, 12, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if snap.ScannedAt != "2026-09-20T14:00:00Z" {
+		t.Errorf("timestamp should be truncated to the hour, got %q", snap.ScannedAt)
+	}
+}
+
+func TestWriteCreatesFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nested", "snapshot.json")
+	if err := Write(path, sample(), time.Now()); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	var snap Snapshot
+	if err := json.Unmarshal(b, &snap); err != nil {
+		t.Fatalf("snapshot is not valid JSON: %v", err)
+	}
+	if snap.Notice == "" {
+		t.Error("the snapshot should state in-band what it does and does not contain")
+	}
+}
+
+func TestEmptyScanProducesCleanSnapshot(t *testing.T) {
+	start := time.Date(2026, 9, 20, 10, 0, 0, 0, time.UTC)
+	snap, err := Build(domain.NewScanResult(start, start, 5, nil), time.Now())
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if snap.Grade != "A+" || len(snap.Findings) != 0 {
+		t.Errorf("a clean scan should snapshot as A+ with no records, got %+v", snap)
+	}
+}

@@ -7,20 +7,90 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
+	"strings"
+	"time"
 
 	"gpusecurity/internal/domain"
 )
 
+// maxFixFirst caps the "fix these first" list. A remediation list a security
+// lead can act on this afternoon beats an exhaustive one they file away.
+const maxFixFirst = 5
+
+type sevCount struct {
+	Severity domain.Severity
+	Count    int
+}
+
+type hostGroup struct {
+	Host     string
+	Findings []domain.Finding
+}
+
+type view struct {
+	domain.ScanResult
+	Started       string
+	Duration      string
+	SevCounts     []sevCount
+	FixFirst      []domain.Finding
+	Hosts         []hostGroup
+	HasRayFinding bool
+}
+
+func newView(r domain.ScanResult) view {
+	r.Findings = domain.SortFindings(r.Findings)
+
+	var counts []sevCount
+	for _, s := range domain.SeverityOrder() {
+		if n := r.Summary[s]; n > 0 {
+			counts = append(counts, sevCount{s, n})
+		}
+	}
+
+	fixFirst := r.Findings
+	if len(fixFirst) > maxFixFirst {
+		fixFirst = fixFirst[:maxFixFirst]
+	}
+
+	var hosts []hostGroup
+	index := map[string]int{}
+	for _, f := range r.Findings {
+		if i, ok := index[f.Host]; ok {
+			hosts[i].Findings = append(hosts[i].Findings, f)
+			continue
+		}
+		index[f.Host] = len(hosts)
+		hosts = append(hosts, hostGroup{Host: f.Host, Findings: []domain.Finding{f}})
+	}
+
+	hasRay := false
+	for _, f := range r.Findings {
+		if strings.HasPrefix(f.RuleID, "RG-RAY-") {
+			hasRay = true
+			break
+		}
+	}
+
+	return view{
+		ScanResult:    r,
+		Started:       r.StartedAt.UTC().Format("2006-01-02 15:04 UTC"),
+		Duration:      formatDuration(r.CompletedAt.Sub(r.StartedAt)),
+		SevCounts:     counts,
+		FixFirst:      fixFirst,
+		Hosts:         hosts,
+		HasRayFinding: hasRay,
+	}
+}
+
+// Write emits the machine-readable JSON and the standalone HTML report.
+// Both are self-contained: the HTML embeds its own styles and references no
+// external asset, so it can be opened on an air-gapped workstation or mailed
+// to a security lead as a single file.
 func Write(outDir string, r domain.ScanResult) error {
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return err
 	}
-	jb, err := json.MarshalIndent(r, "", "  ")
-	if err != nil {
-		return err
-	}
-	if err := os.WriteFile(filepath.Join(outDir, "report.json"), jb, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(outDir, "report.json"), MarshalJSON(r), 0o644); err != nil {
 		return err
 	}
 	f, err := os.Create(filepath.Join(outDir, "report.html"))
@@ -28,75 +98,185 @@ func Write(outDir string, r domain.ScanResult) error {
 		return err
 	}
 	defer f.Close()
-	return htmlTmpl.Execute(f, sortForReport(r))
+	return RenderHTML(f, r)
+}
+
+// MarshalJSON renders the machine-readable report.
+func MarshalJSON(r domain.ScanResult) []byte {
+	r.Findings = domain.SortFindings(r.Findings)
+	b, err := json.MarshalIndent(r, "", "  ")
+	if err != nil {
+		// ScanResult contains only JSON-safe types; this cannot fail in
+		// practice, and a report is not worth aborting a scan over.
+		return []byte("{}")
+	}
+	return append(b, '\n')
+}
+
+// RenderHTML writes the human-readable report.
+func RenderHTML(w io.Writer, r domain.ScanResult) error {
+	return htmlTmpl.Execute(w, newView(r))
 }
 
 func PrintSummary(w io.Writer, r domain.ScanResult) {
+	v := newView(r)
 	fmt.Fprintf(w, "\n=== GPU Risk & Isolation Report ===\n")
-	fmt.Fprintf(w, "Grade: %s (score %d)\n", r.Grade, r.Score)
-	fmt.Fprintf(w, "Targets scanned: %d\n", r.TargetsScanned)
-	for _, s := range sevOrder {
-		if n := r.Summary[s]; n > 0 {
-			fmt.Fprintf(w, "  %-8s %d\n", s, n)
+	fmt.Fprintf(w, "Grade: %s (score %d/100)\n", v.Grade, v.Score)
+	if v.GradeReason != "" {
+		fmt.Fprintf(w, "%s\n", wrap(v.GradeReason, 76))
+	}
+	fmt.Fprintf(w, "Targets scanned: %d   Hosts with findings: %d\n", v.TargetsScanned, v.HostsWithFindings)
+	for _, c := range v.SevCounts {
+		fmt.Fprintf(w, "  %-8s %d\n", c.Severity, c.Count)
+	}
+	if len(v.Findings) == 0 {
+		fmt.Fprintf(w, "\nNo exposure findings on the scanned targets.\n")
+		return
+	}
+	fmt.Fprintf(w, "\nFix these first:\n")
+	for i, f := range v.FixFirst {
+		fmt.Fprintf(w, "  %d. [%s] %s  %s:%d\n     %s\n", i+1, f.Severity, f.RuleID, f.Host, f.Port, f.Title)
+	}
+	if len(v.Findings) > len(v.FixFirst) {
+		fmt.Fprintf(w, "  ... and %d more (see the full report)\n", len(v.Findings)-len(v.FixFirst))
+	}
+}
+
+// formatDuration keeps a fast scan from reading as "0s", which makes the
+// report look like it did not run.
+func formatDuration(d time.Duration) string {
+	switch {
+	case d < time.Second:
+		return d.Round(time.Millisecond).String()
+	case d < time.Minute:
+		return d.Round(100 * time.Millisecond).String()
+	default:
+		return d.Round(time.Second).String()
+	}
+}
+
+func wrap(s string, width int) string {
+	var b strings.Builder
+	col := 0
+	for _, word := range strings.Fields(s) {
+		if col > 0 && col+1+len(word) > width {
+			b.WriteByte('\n')
+			col = 0
+		} else if col > 0 {
+			b.WriteByte(' ')
+			col++
 		}
+		b.WriteString(word)
+		col += len(word)
 	}
-	for _, f := range sortFindings(r.Findings) {
-		fmt.Fprintf(w, "  [%s] %s - %s:%d (%s)\n", f.Severity, f.RuleID, f.Host, f.Port, f.Title)
-	}
+	return b.String()
 }
 
-var sevOrder = []domain.Severity{domain.Critical, domain.High, domain.Medium, domain.Low, domain.Info}
-
-func sevRank(s domain.Severity) int {
-	for i, v := range sevOrder {
-		if v == s {
-			return i
-		}
-	}
-	return len(sevOrder)
-}
-
-func sortFindings(in []domain.Finding) []domain.Finding {
-	out := append([]domain.Finding(nil), in...)
-	sort.SliceStable(out, func(i, j int) bool { return sevRank(out[i].Severity) < sevRank(out[j].Severity) })
-	return out
-}
-
-func sortForReport(r domain.ScanResult) domain.ScanResult {
-	r.Findings = sortFindings(r.Findings)
-	return r
-}
-
-var htmlTmpl = template.Must(template.New("r").Parse(`<!doctype html>
+var htmlTmpl = template.Must(template.New("r").Funcs(template.FuncMap{
+	"gradeClass": func(g domain.Grade) string { return strings.ReplaceAll(string(g), "+", "plus") },
+}).Parse(`<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>GPU Risk & Isolation Report</title>
+<title>GPU Risk &amp; Isolation Report</title>
 <style>
-:root{color-scheme:light dark;--fg:#111;--muted:#666;--bg:#fff;--card:#f6f7f9;--line:#e4e6eb}
+:root{color-scheme:light dark;--fg:#111;--muted:#666;--bg:#fff;--card:#f6f7f9;--line:#e4e6eb;--accent:#c0392b}
 @media(prefers-color-scheme:dark){:root{--fg:#e8e8ea;--muted:#9aa0a6;--bg:#0f1115;--card:#171a21;--line:#262a33}}
-body{font:15px/1.55 -apple-system,Segoe UI,Roboto,sans-serif;color:var(--fg);background:var(--bg);margin:0;padding:2rem;max-width:900px;margin-inline:auto}
-h1{font-size:1.5rem;margin:0 0 .25rem}.sub{color:var(--muted);margin:0 0 1.5rem}
-.grade{display:inline-block;font-size:2rem;font-weight:700;padding:.2em .5em;border-radius:.4rem;background:var(--card)}
+*{box-sizing:border-box}
+body{font:15px/1.55 -apple-system,Segoe UI,Roboto,sans-serif;color:var(--fg);background:var(--bg);margin:0;padding:2rem 1.25rem;max-width:920px;margin-inline:auto}
+h1{font-size:1.6rem;margin:0 0 .25rem}
+h2{font-size:1.05rem;margin:2.25rem 0 .6rem;padding-bottom:.35rem;border-bottom:1px solid var(--line)}
+h3{font-size:.95rem;margin:1.5rem 0 .4rem;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+p{margin:.5rem 0}
+.sub{color:var(--muted);margin:0 0 1.5rem}
+.hero{display:flex;gap:1.25rem;align-items:center;background:var(--card);border:1px solid var(--line);border-radius:.6rem;padding:1.1rem 1.25rem}
+.grade{font-size:3rem;font-weight:700;line-height:1;min-width:3.2rem;text-align:center}
 .g-Fplus,.g-F{color:#c0392b}.g-C{color:#e67e22}.g-B{color:#d4a017}.g-A,.g-Aplus{color:#2e7d32}
-table{width:100%;border-collapse:collapse;margin-top:1rem}th,td{text-align:left;padding:.6rem .5rem;border-bottom:1px solid var(--line);vertical-align:top}
+.hero .reason{margin:0 0 .4rem;font-weight:600}
+.hero .facts{margin:0;color:var(--muted);font-size:.9rem}
+.counts{margin:1rem 0 0;padding:0;list-style:none;display:flex;flex-wrap:wrap;gap:.4rem}
+.counts li{background:var(--card);border:1px solid var(--line);border-radius:.3rem;padding:.15rem .5rem;font-size:.85rem}
+ol.fix{padding-left:1.2rem}ol.fix li{margin:.55rem 0}
+.wrapper{overflow-x:auto}
+table{width:100%;border-collapse:collapse;margin-top:.5rem;min-width:36rem}
+th,td{text-align:left;padding:.6rem .5rem;border-bottom:1px solid var(--line);vertical-align:top}
 th{color:var(--muted);font-weight:600;font-size:.85rem}
-.sev{font-weight:600;font-size:.8rem;text-transform:uppercase}
+.sev{font-weight:600;font-size:.8rem;text-transform:uppercase;white-space:nowrap}
 .sev.critical{color:#c0392b}.sev.high{color:#e67e22}.sev.medium{color:#d4a017}.sev.low{color:#3498db}.sev.info{color:var(--muted)}
-.pill{background:var(--card);border:1px solid var(--line);border-radius:.3rem;padding:.05rem .4rem;font-size:.8rem;margin-right:.3rem}
-.rem{color:var(--muted);font-size:.9rem}.foot{color:var(--muted);font-size:.8rem;margin-top:2rem;border-top:1px solid var(--line);padding-top:1rem}
+.sev::before{content:"\25CF  ";font-size:.9em}
+.pill{display:inline-block;background:var(--card);border:1px solid var(--line);border-radius:.3rem;padding:.05rem .4rem;font-size:.78rem;margin:.1rem .3rem .1rem 0;white-space:nowrap}
+.ruleid{white-space:nowrap}
+.rem{color:var(--muted);font-size:.9rem;display:block;margin-top:.25rem}
+.note{background:var(--card);border-left:3px solid var(--accent);border-radius:0 .4rem .4rem 0;padding:.9rem 1.1rem;font-size:.92rem}
+.foot{color:var(--muted);font-size:.8rem;margin-top:2.5rem;border-top:1px solid var(--line);padding-top:1rem}
+@media print{
+ :root{--fg:#000;--muted:#444;--bg:#fff;--card:#f4f4f4;--line:#ccc}
+ body{padding:0;max-width:none;font-size:11pt}
+ h2{page-break-after:avoid}
+ tr,li,.note,.hero{page-break-inside:avoid}
+ .hostgroup{page-break-inside:avoid}
+}
 </style></head><body>
+
 <h1>GPU Risk &amp; Isolation Report</h1>
-<p class="sub">AI infrastructure exposure assessment &middot; generated by ray-guard</p>
-<p><span class="grade g-{{.Grade}}">{{.Grade}}</span> &nbsp; <span class="pill">score {{.Score}}/100</span> <span class="pill">{{.TargetsScanned}} target(s)</span></p>
-{{if .Findings}}
-<table><thead><tr><th>Severity</th><th>Rule</th><th>Finding</th><th>Location</th></tr></thead><tbody>
+<p class="sub">AI infrastructure exposure assessment &middot; generated by ray-guard {{.ScannerVersion}} &middot; {{.Started}}</p>
+
+<div class="hero">
+  <div class="grade g-{{gradeClass .Grade}}">{{.Grade}}</div>
+  <div>
+    <p class="reason">{{.GradeReason}}</p>
+    <p class="facts">Score {{.Score}}/100 &middot; {{.TargetsScanned}} target(s) scanned in {{.Duration}} &middot; {{.HostsWithFindings}} host(s) with findings</p>
+  </div>
+</div>
+{{if .SevCounts}}<ul class="counts">{{range .SevCounts}}<li><span class="sev {{.Severity}}">{{.Severity}}</span> {{.Count}}</li>{{end}}</ul>{{end}}
+
+{{if .FixFirst}}
+<h2>Fix these first</h2>
+<ol class="fix">
+{{range .FixFirst}}<li><strong>{{.Title}}</strong> &mdash; {{.Host}}:{{.Port}} <span class="pill">{{.RuleID}}</span><span class="rem">{{.Remediation}}</span></li>
+{{end}}</ol>
+{{end}}
+
+{{if .HasRayFinding}}
+<h2>Why this matters</h2>
+<div class="note">
+<p>An unauthenticated Ray dashboard is not a hardening gap &mdash; it is remote code execution.
+Ray's Jobs API accepts job submissions from anyone who can reach it, and by design that means
+arbitrary code runs on your cluster with the permissions of the Ray worker.</p>
+<p>This is tracked as <strong>CVE-2023-48022</strong> and <strong>CVE-2025-62593</strong>, and it has been
+exploited in the wild: the <strong>ShadowRay</strong> campaign compromised exposed Ray clusters to steal
+credentials and mine cryptocurrency on rented GPUs. Exposed clusters were found by internet-wide
+scanning, not by targeting.</p>
+<p>The exposure above was confirmed by observation only &mdash; a single benign GET request. No
+job was submitted and no code was executed against your infrastructure.</p>
+</div>
+{{end}}
+
+<h2>Findings</h2>
+{{if .Hosts}}
+{{range .Hosts}}
+<div class="hostgroup">
+<h3>{{.Host}}</h3>
+<div class="wrapper">
+<table><thead><tr><th>Severity</th><th>Rule</th><th>Finding</th><th>Port</th></tr></thead><tbody>
 {{range .Findings}}<tr>
 <td><span class="sev {{.Severity}}">{{.Severity}}</span></td>
-<td>{{.RuleID}}{{range .CVEs}}<br><span class="pill">{{.}}</span>{{end}}</td>
-<td>{{.Title}}<br><span class="rem">{{.Detail}}</span><br><span class="rem">Fix: {{.Remediation}}</span></td>
-<td>{{.Host}}:{{.Port}}</td>
+<td><span class="ruleid">{{.RuleID}}</span>{{range .CVEs}}<br><span class="pill">{{.}}</span>{{end}}</td>
+<td>{{.Title}}<span class="rem">{{.Detail}}</span><span class="rem"><strong>Fix:</strong> {{.Remediation}}</span></td>
+<td>{{.Port}}</td>
 </tr>{{end}}
 </tbody></table>
+</div>
+</div>
+{{end}}
 {{else}}<p>No exposure findings on the scanned targets.</p>{{end}}
-<p class="foot">Read-only assessment. Detection by observation, not exploitation. No customer payload was read or stored. Grade thresholds are provisional (CLAUDE.md 10.0).</p>
+
+<h2>Scope &amp; method</h2>
+<p class="facts">This is an agentless, read-only Level 1 assessment run from outside the hosts. It
+observes which services are reachable, whether they require authentication, and their transport
+posture. It does not install software, does not require credentials, and cannot assess
+cross-tenant fabric isolation or hardware attestation &mdash; those need deeper tiers.</p>
+
+<p class="foot">Read-only assessment. Detection by observation, not exploitation. No customer
+payload &mdash; no model weights, prompts, training data, inference content, or object contents
+&mdash; was read, stored, or transmitted. Grade thresholds are provisional (CLAUDE.md 10.0).</p>
 </body></html>`))

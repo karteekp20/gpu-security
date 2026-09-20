@@ -1,0 +1,50 @@
+{
+  "scanner_version": "0.2.0-dev",
+  "started_at": "2026-09-20T14:00:00Z",
+  "completed_at": "2026-09-20T14:00:12Z",
+  "targets_scanned": 4,
+  "hosts_with_findings": 2,
+  "findings": [
+    {
+      "rule_id": "RG-RAY-001",
+      "title": "Unauthenticated Ray dashboard / Jobs API exposed",
+      "severity": "critical",
+      "host": "10.0.0.5",
+      "port": 8265,
+      "service": "ray-dashboard",
+      "detail": "HTTP 200 without authentication on port 8265 (no TLS)",
+      "remediation": "Enable Ray authentication or bind the dashboard to loopback/a private subnet; never expose port 8265 publicly.",
+      "cves": [
+        "CVE-2023-48022",
+        "CVE-2025-62593"
+      ]
+    },
+    {
+      "rule_id": "RG-TLS-001",
+      "title": "TLS certificate fails verification",
+      "severity": "medium",
+      "host": "10.0.0.5",
+      "port": 8888,
+      "service": "tls",
+      "detail": "Certificate on port 8888 is self-signed (expires 2027-01-01)",
+      "remediation": "Replace the certificate with one issued by a trusted CA, matching the service hostname and within its validity window."
+    },
+    {
+      "rule_id": "RG-OLLAMA-001",
+      "title": "Unauthenticated Ollama API exposed",
+      "severity": "medium",
+      "host": "10.0.0.6",
+      "port": 11434,
+      "service": "ollama",
+      "detail": "HTTP 200 without authentication on port 11434 (no TLS)",
+      "remediation": "Restrict the Ollama API (11434) to localhost/trusted networks."
+    }
+  ],
+  "summary": {
+    "critical": 1,
+    "medium": 2
+  },
+  "score": 40,
+  "grade": "F",
+  "grade_reason": "A critical, remotely exploitable exposure is reachable: Unauthenticated Ray dashboard / Jobs API exposed. This is remote code execution, not a misconfiguration."
+}
