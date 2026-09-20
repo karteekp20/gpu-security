@@ -3,9 +3,10 @@
 > **Repo / working name:** `gpu-security` · **Scanner CLI:** `ray-guard` · **Platform / portal brand & trust badge:** deliberately deferred until Phase 1 — buyers often name it better. `[Platform]` in this doc and the `RG-` rule-ID prefix are placeholders standing in for that deferred brand.
 > **Purpose of this file:** Single source of truth for the project. Read this fully before writing any code, making any architecture decision, or adding any dependency. It encodes not just *what* to build but *what not to build yet* and *why*. Both humans and coding agents (Claude Code) should treat the "Non-Negotiable Principles" section as binding constraints, not suggestions.
 > **Owner:** Karteek
-> **Last updated:** 2026-09-20 (rev 4)
+> **Last updated:** 2026-09-20 (rev 5)
 > **Status:** Pre-MVP (Wedge stage)
 >
+> **rev 5 changelog:** added §1.5 (two scan vantages / two buyers) documenting that the same `ray-guard` serves both the Neocloud (landlord) and the tenant (renter) — a clarification, not new build scope. Continuous monitoring was already covered (Phase 2 / §9) and is unchanged.
 > **rev 4 changelog:** documented the web surfaces (§7.6) — the file previously described the backend in depth but the frontend was a single diagram box. Establishes that this is *three* surfaces (operator console, public trust page, independent verifier) plus the standalone Phase-0 report, and pins the phasing (public trust page ships in Phase 1, not later). Enhanced §14 Phase-0/1 accordingly.
 > **rev 3 changelog:** merged the concrete-implementation additions from an external engineering draft onto this file's principled spine — added the Posture Grading Matrix (§10.0), pinned key libraries (§15), a worked Rego sentinel example + NATS subject taxonomy (§8, §6.6), exact L2 securityContext and NVML call (§9, §12), Prometheus metrics + Makefile/coverage standards (§17), and widened scope to Slurm + RoCE v2 (§1.2, §3, §8). **Explicitly preserved from rev 2 (the external draft dropped these):** P2 validate-before-build, P3 metadata-only, P9 benchmark flywheel, §5.3/§5.4 extraction seams, and §14.1 Future Horizon with the H5/H6 trap-warnings.
 > **rev 2 changelog:** verification sentinels (§8); CC-mode tier split (§3, §9); signed air-gap manifest (§13, §16); AGE→Neo4j trigger (§6.2); buyer-led Phase-0 gate (§14); §14.1 Future Horizon backlog.
@@ -42,6 +43,15 @@ Traditional CSPM/CNAPP and AI-SPM tools (Wiz, Prisma AIRS, Orca, CrowdStrike, Mi
 
 ### 1.4 What success looks like (and the honest ceiling)
 - **Realistic prize:** a strong specialist business or a $150M–$700M strategic acquisition (CNAPP incumbent, Neocloud-tooling player, NVIDIA-adjacent, or confidential-computing vendor). Not an obvious standalone unicorn. Build accordingly — clean IP boundaries, clean integration surfaces.
+
+### 1.5 Two scan vantages, one tool, two buyers
+The same `ray-guard` scanner runs from **either side** of a GPU rental. This is a documentation clarification, **not** new build scope — it is one tool, one codebase, two vantage points:
+- **Neocloud-side (the landlord):** the provider scans its own environment; the report is sales-enablement it hands to prospective tenants (→ the "Verified by [Platform]" trust page).
+- **Tenant-side (the renter):** a regulated enterprise renting GPU capacity runs the same scanner against *its own rented slice* to produce audit evidence for *its own* auditors. Note the difference from a hyperscaler CSPM like Wiz: a tenant renting bare-metal/Kubernetes GPU capacity usually has **no cloud management API to connect to**, so tenant-side scanning runs from inside, against the hosts/services the tenant controls — not via an account API.
+
+Often the tenant's demand ("prove this is safe before we run our models here") is what pushes the Neocloud to buy. So include a regulated renter alongside Neoclouds in the Phase-0 buyer conversations; which side leans in harder tells you the beachhead.
+
+**Scope note (be honest with buyers):** the tenant-side L1 scan covers the *renter's own exposure*. Deep cross-tenant *isolation proof* from the tenant vantage — "can another tenant actually reach me?" — needs the L2/L3 fabric/hardware checks and is a later stage, not something a Phase-0 scan can prove.
 
 ---
 
@@ -643,6 +653,7 @@ Import-boundary linting enforces Section 5.4. Protobuf changes require a compati
 | 2026-09-20 (rev 3) | Merged external draft's concreteness but PRESERVED P2, P3, P9, §5.3/5.4, §14.1 | External draft dropped validate-first, metadata-only, the flywheel, extraction seams, and the deferred backlog — these are the disciplines that matter most; kept them | — |
 
 | 2026-09-20 (rev 4) | Documented web surfaces as THREE portals + Phase-0 report (§7.6); public trust page ships Phase 1 | Frontend was undocumented (one diagram box); the public trust page is the revenue surface and must not be deferred | — |
+| 2026-09-20 (rev 5) | Documented tenant-side scan vantage + two-buyer model (§1.5); same tool, no new scope | Prevents building a separate tenant scanner; captures that renter demand often drives the Neocloud sale | — |
 
 > When you change any of the above, **add a new dated row** and set "Supersedes." Never edit history.
 
