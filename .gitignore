@@ -1,0 +1,6 @@
+/bin/
+/report/
+*.out
+*.test
+.DS_Store
+.env
