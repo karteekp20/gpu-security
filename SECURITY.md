@@ -37,7 +37,7 @@ cluster:
 cosign verify-blob \
   --certificate ray-guard-linux-amd64.pem \
   --signature  ray-guard-linux-amd64.sig \
-  --certificate-identity-regexp '^https://github.com/.*/gpu-security/.*' \
+  --certificate-identity-regexp '^https://github.com/karteekp20/gpu-security/' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   ray-guard-linux-amd64
 ```
