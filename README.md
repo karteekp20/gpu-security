@@ -141,6 +141,7 @@ CLAUDE.md               # engineering constitution (read first)
 docs/architecture.md    # what exists today
 docs/threat-model.md    # scanner attack surface + P3 controls
 docs/decision-log.md    # append-only; why things are the way they are
+docs/assessment/        # how to run a buyer-led assessment (scope, demo, runbook)
 docs/validation-log.md  # the Phase-0 buyer gate — tracks whether Phase 1 starts
 docs/publishing.md      # manual checklist for going public + cutting a release
 docs/data-model.md      # Postgres/Neo4j/Timescale schema (Phase 1+)

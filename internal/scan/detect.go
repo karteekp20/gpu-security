@@ -97,7 +97,7 @@ func detectOne(o domain.Observation) (domain.Finding, bool) {
 
 	// A reachability-only (TCP) check: no HTTP response to reason about.
 	if o.HTTPStatus == 0 {
-		return mkFinding(r, o, fmt.Sprintf("Port %d reachable. %s", o.Port, o.Note)), true
+		return mkFinding(r, o, fmt.Sprintf("Port %d is reachable (%s)", o.Port, o.Note)), true
 	}
 
 	if o.Unauth {

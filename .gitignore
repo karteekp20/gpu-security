@@ -1,6 +1,12 @@
 /bin/
-/report/
 *.out
 *.test
 .DS_Store
 .env
+
+# Scan output. Client findings must never reach a public repository, so these
+# patterns are a backstop, not the plan: write real assessment reports OUTSIDE
+# the working tree entirely (see docs/assessment/runbook.md).
+/report/
+/report-*/
+snapshot*.json

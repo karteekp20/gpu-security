@@ -8,7 +8,10 @@ PLATFORMS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64
 # security lead who will run it once, in 60 seconds (CLAUDE.md P4, 15).
 GOFLAGS_STATIC := CGO_ENABLED=0
 
-.PHONY: build build-all test test-p3 test-integration lint fmt run report-pdf sbom airgap-bundle clean
+.PHONY: build build-all test test-p3 test-integration demo demo-up demo-down lint fmt run report-pdf sbom airgap-bundle clean
+
+# The demo subnet is pinned in test/integration/docker-compose.yml.
+DEMO_SUBNET := 172.31.77.0/24
 
 build:
 	$(GOFLAGS_STATIC) go build -ldflags '$(LDFLAGS)' -o bin/$(BINARY) ./cmd/$(BINARY)
@@ -48,6 +51,34 @@ test-integration:
 		{ docker compose logs --tail=40; exit 1; }; \
 	./wait-ready.sh && \
 	RAY_GUARD_INTEGRATION=1 go test -tags=integration -count=1 -v ./...
+
+## demo-up: start the deliberately-insecure cluster used for live demos.
+## Run this BEFORE a call - Ray takes 30-60s to bind its dashboard, and that
+## is not silence you want on a screenshare. See docs/assessment/demo.md.
+demo-up:
+	@cd test/integration && \
+	if ! docker compose version >/dev/null 2>&1; then \
+		echo "docker compose unavailable. If it reports 'client version is too old',"; \
+		echo "try: DOCKER_API_VERSION=1.44 make demo-up"; \
+		exit 1; \
+	fi; \
+	docker compose up -d --wait --wait-timeout 300 >/dev/null || \
+		{ docker compose logs --tail=40; exit 1; }; \
+	./wait-ready.sh
+	@echo
+	@echo "Demo cluster up on $(DEMO_SUBNET). Run 'make demo' to scan it."
+	@echo "Tear down with 'make demo-down' when you are finished."
+
+## demo: scan the demo cluster and write the report. ~8 seconds.
+demo: build
+	@./bin/$(BINARY) -cidr $(DEMO_SUBNET) -timeout 2s -out ./report || true
+	@echo
+	@echo "Open ./report/report.html to walk through it on screen."
+
+## demo-down: stop the demo cluster and remove its network and volumes.
+demo-down:
+	@cd test/integration && docker compose down -v --remove-orphans >/dev/null 2>&1 || true
+	@echo "demo cluster removed"
 
 lint:
 	@unformatted=$$(gofmt -l .); \

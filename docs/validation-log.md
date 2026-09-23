@@ -25,6 +25,9 @@ platform — that is the gate working, not the gate failing.
 
 **0 / 3** buyer-led assessments · **0 / 2** pay-and-name-it intents.
 
+> How to run one: [`assessment/`](assessment/) — demo script, scope and
+> authorization template, runbook, and the do-not-claim list.
+
 ## Buyer-led assessments
 
 Record one row per run where a buyer's security or ops lead was present.

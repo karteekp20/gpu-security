@@ -223,7 +223,7 @@ func (s *Scanner) probeOpenPort(ctx context.Context, host string, port int, chec
 		if c.Scheme != "http" {
 			tcpOnly = append(tcpOnly, domain.Observation{
 				Host: host, Port: port, Service: c.Service, State: domain.PortOpen,
-				TLS: tlsState, Note: "control/RPC port reachable",
+				TLS: tlsState, Note: "control/RPC port; speaks no HTTP",
 			})
 			continue
 		}
@@ -387,7 +387,7 @@ func (s *Scanner) httpProbe(ctx context.Context, host string, c Check, tlsState 
 		}
 		return o
 	}
-	o.Note = "port open, no HTTP response"
+	o.Note = "no HTTP response"
 	return o
 }
 
