@@ -2,6 +2,7 @@ package benchmark
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +11,19 @@ import (
 
 	"gpusecurity/internal/domain"
 )
+
+// respondedHosts builds n targets that all answered, so these tests exercise
+// anonymization rather than coverage handling.
+func respondedHosts(n int) []domain.HostSummary {
+	out := make([]domain.HostSummary, 0, n)
+	for i := 0; i < n; i++ {
+		out = append(out, domain.HostSummary{
+			Host:  fmt.Sprintf("gpu-node-%02d.internal.example.com", i),
+			State: domain.HostResponded,
+		})
+	}
+	return out
+}
 
 func sample() domain.ScanResult {
 	findings := []domain.Finding{
@@ -22,7 +36,7 @@ func sample() domain.ScanResult {
 			Detail: "HTTP 200 without authentication on port 11434"},
 	}
 	start := time.Date(2026, 9, 20, 14, 37, 12, 0, time.UTC)
-	return domain.NewScanResult(start, start.Add(9*time.Second), 3, findings)
+	return domain.NewScanResult(start, start.Add(9*time.Second), respondedHosts(3), findings)
 }
 
 func TestSnapshotOmitsRawHostnames(t *testing.T) {
@@ -113,7 +127,7 @@ func TestWriteCreatesFile(t *testing.T) {
 
 func TestEmptyScanProducesCleanSnapshot(t *testing.T) {
 	start := time.Date(2026, 9, 20, 10, 0, 0, 0, time.UTC)
-	snap, err := Build(domain.NewScanResult(start, start, 5, nil), time.Now())
+	snap, err := Build(domain.NewScanResult(start, start, respondedHosts(5), nil), time.Now())
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}

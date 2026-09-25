@@ -10,9 +10,23 @@ func f(rule string, sev Severity, host string, port int) Finding {
 	return Finding{RuleID: rule, Title: rule + " title", Severity: sev, Host: host, Port: port}
 }
 
+// resultWith builds a result where every target answered, which is the normal
+// case and keeps these tests focused on grading rather than coverage.
 func resultWith(findings ...Finding) ScanResult {
+	return resultWithHosts(responded("host-a", "host-b"), findings...)
+}
+
+func resultWithHosts(hosts []HostSummary, findings ...Finding) ScanResult {
 	start := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
-	return NewScanResult(start, start.Add(time.Second), 2, findings)
+	return NewScanResult(start, start.Add(time.Second), hosts, findings)
+}
+
+func responded(hosts ...string) []HostSummary {
+	out := make([]HostSummary, 0, len(hosts))
+	for _, h := range hosts {
+		out = append(out, HostSummary{Host: h, State: HostResponded})
+	}
+	return out
 }
 
 func TestGradeIsDrivenByWorstFinding(t *testing.T) {
@@ -151,6 +165,99 @@ func TestExitCodeEncodesWorstSeverity(t *testing.T) {
 	}
 	if got := resultWith().ExitCode(); got != 0 {
 		t.Errorf("a clean scan must exit 0, got %d", got)
+	}
+}
+
+// The false all-clear is the most damaging thing this tool could say. A scan
+// that reached nothing must never look like a scan that found nothing.
+func TestUnreachableTargetsNeverGradeClean(t *testing.T) {
+	cases := []struct {
+		name  string
+		hosts []HostSummary
+	}{
+		{"all names unresolvable", []HostSummary{
+			{Host: "typo.invalid", State: HostUnresolved},
+			{Host: "also-typo.invalid", State: HostUnresolved},
+		}},
+		{"all hosts silent", []HostSummary{
+			{Host: "198.51.100.1", State: HostNoResponse},
+			{Host: "198.51.100.2", State: HostNoResponse},
+		}},
+		{"nothing scanned at all", nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := resultWithHosts(tc.hosts)
+			if r.Grade == "A+" {
+				t.Errorf("FALSE ALL-CLEAR: graded A+ without reaching anything")
+			}
+			if r.Grade != GradeInconclusive {
+				t.Errorf("want %s, got %s", GradeInconclusive, r.Grade)
+			}
+			if !r.Inconclusive() {
+				t.Error("a scan that reached nothing must report itself inconclusive")
+			}
+			if r.Score != 0 {
+				t.Errorf("an inconclusive scan has no score, got %d", r.Score)
+			}
+			if r.ExitCode() != 7 {
+				t.Errorf("inconclusive must exit non-zero (7) so CI fails, got %d", r.ExitCode())
+			}
+			if !strings.Contains(r.GradeReason, "not a clean result") &&
+				!strings.Contains(r.GradeReason, "No targets") {
+				t.Errorf("the rationale must say this is not a pass, got %q", r.GradeReason)
+			}
+		})
+	}
+}
+
+// A host that answers - even by refusing every port - is real evidence.
+func TestRespondingHostWithNoServicesIsGenuinelyClean(t *testing.T) {
+	r := resultWithHosts(responded("10.0.0.1"))
+	if r.Grade != "A+" || r.Score != 100 {
+		t.Errorf("a live host running nothing is a real A+, got %s/%d", r.Grade, r.Score)
+	}
+	if r.Inconclusive() || r.ExitCode() != 0 {
+		t.Errorf("a genuine clean result must exit 0, got %d", r.ExitCode())
+	}
+}
+
+func TestPartialCoverageIsDisclosedOnACleanGrade(t *testing.T) {
+	hosts := append(responded("10.0.0.1"),
+		HostSummary{Host: "10.0.0.2", State: HostNoResponse},
+		HostSummary{Host: "bad.invalid", State: HostUnresolved})
+	r := resultWithHosts(hosts)
+
+	if r.Grade != "A+" {
+		t.Errorf("one responding clean host still grades A+, got %s", r.Grade)
+	}
+	if !r.PartialCoverage() {
+		t.Error("expected partial coverage to be flagged")
+	}
+	if !strings.Contains(r.GradeReason, "did not respond") {
+		t.Errorf("an A+ with gaps must disclose them, got %q", r.GradeReason)
+	}
+	if r.HostsResponded != 1 || r.HostsUnanswered != 1 || r.HostsUnresolved != 1 {
+		t.Errorf("coverage counts wrong: %+v", r)
+	}
+	if len(r.Unreachable) != 2 {
+		t.Errorf("expected 2 unreachable targets recorded, got %d", len(r.Unreachable))
+	}
+}
+
+// Findings outrank coverage: an exposure found on a reachable host is still
+// the headline even if most of the range was dark.
+func TestFindingsStillGradeWhenMostTargetsWereDark(t *testing.T) {
+	hosts := append(responded("10.0.0.1"),
+		HostSummary{Host: "10.0.0.2", State: HostNoResponse},
+		HostSummary{Host: "10.0.0.3", State: HostNoResponse})
+	r := resultWithHosts(hosts, f("RG-RAY-001", Critical, "10.0.0.1", 8265))
+
+	if r.Grade != "F" {
+		t.Errorf("a critical finding grades F regardless of coverage, got %s", r.Grade)
+	}
+	if r.ExitCode() != 6 {
+		t.Errorf("want exit 6 for critical, got %d", r.ExitCode())
 	}
 }
 

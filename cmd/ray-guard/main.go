@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -16,7 +17,8 @@ import (
 )
 
 // Exit codes. 0 = clean, 1 = runtime error, 2 = usage error; 3-6 encode the
-// worst severity observed so a tenant can gate their own CI on the result.
+// worst severity observed so a tenant can gate their own CI on the result;
+// 7 = inconclusive, meaning no target responded and nothing was verified.
 const (
 	exitRuntimeError = 1
 	exitUsageError   = 2
@@ -75,10 +77,10 @@ func run() int {
 
 	scanner := scan.NewWithChecks(*timeout, checks)
 	ctx := context.Background()
-	observations := probeAll(ctx, scanner, targets, buckets, *concurrency)
+	observations, hosts := probeAll(ctx, scanner, targets, buckets, *concurrency)
 
 	findings := scan.Detect(observations)
-	result := domain.NewScanResult(start, time.Now(), len(targets)+len(buckets), findings)
+	result := domain.NewScanResult(start, time.Now(), hosts, findings)
 
 	if err := report.Write(*outDir, result); err != nil {
 		fmt.Fprintln(os.Stderr, "report error:", err)
@@ -99,7 +101,7 @@ func run() int {
 	return result.ExitCode()
 }
 
-func probeAll(ctx context.Context, scanner *scan.Scanner, targets, buckets []string, concurrency int) []domain.Observation {
+func probeAll(ctx context.Context, scanner *scan.Scanner, targets, buckets []string, concurrency int) ([]domain.Observation, []domain.HostSummary) {
 	if concurrency < 1 {
 		concurrency = 1
 	}
@@ -107,6 +109,7 @@ func probeAll(ctx context.Context, scanner *scan.Scanner, targets, buckets []str
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	var observations []domain.Observation
+	var hosts []domain.HostSummary
 
 	for _, t := range targets {
 		t := t
@@ -115,9 +118,10 @@ func probeAll(ctx context.Context, scanner *scan.Scanner, targets, buckets []str
 		go func() {
 			defer wg.Done()
 			defer func() { <-sem }()
-			obs := scanner.ProbeHost(ctx, t)
+			hs := scanner.ProbeHost(ctx, t)
 			mu.Lock()
-			observations = append(observations, obs...)
+			observations = append(observations, hs.Observations...)
+			hosts = append(hosts, hs.Summary())
 			mu.Unlock()
 		}()
 	}
@@ -134,14 +138,20 @@ func probeAll(ctx context.Context, scanner *scan.Scanner, targets, buckets []str
 				fmt.Fprintln(os.Stderr, "bucket check:", err)
 				return
 			}
+			state := domain.HostResponded
+			if o.HTTPStatus == 0 {
+				state = domain.HostNoResponse
+			}
 			mu.Lock()
 			observations = append(observations, o)
+			hosts = append(hosts, domain.HostSummary{Host: o.Host, State: state})
 			mu.Unlock()
 		}()
 	}
 
 	wg.Wait()
-	return observations
+	sort.Slice(hosts, func(i, j int) bool { return hosts[i].Host < hosts[j].Host })
+	return observations, hosts
 }
 
 func loadTargets(arg, file, cidr string, allowLarge bool) ([]string, error) {

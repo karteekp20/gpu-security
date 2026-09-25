@@ -5,7 +5,7 @@
 > those land (Phase 1), this document must be extended in the same PR that
 > adds them (CLAUDE.md §12, §17).
 >
-> **Status:** current as of the Phase-0 scanner. **Last updated:** 2026-09-20.
+> **Status:** current as of the Phase-0 scanner. **Last updated:** 2026-09-25.
 
 ## Why this document exists
 
@@ -125,7 +125,32 @@ malformed certificate.*
 **Residual risk.** Standard-library parser vulnerabilities. Mitigated by
 `govulncheck` in CI and prompt Go version bumps.
 
-### T4 — The report leaks more than intended
+### T4 — The report claims more coverage than it had
+
+*A scan reaches none of its targets — wrong addresses, a firewall between the
+scanner and the cluster, a DNS change — and the empty finding list is read as
+a clean bill of health.*
+
+This is not an attack; it is the failure mode most likely to actually cause
+harm, because it produces confident, wrong reassurance. A tenant whose
+pipeline scans a moved target would pass green indefinitely.
+
+**Controls.**
+- Host state is tracked per target: `responded` (a TCP RST or an open port
+  proves the host is alive), `no-response`, or `unresolved`.
+- Only a TCP RST counts as proof of life. "No route to host" returns promptly
+  but comes from the network, not the host, so an empty subnet cannot
+  masquerade as a clean one.
+- A scan where nothing responded grades `N/A — INCONCLUSIVE`, scores 0, says
+  "this is not a clean result" in the report, and exits **7** so CI fails.
+- Partial coverage is disclosed in the report: a named list of every target
+  that was not assessed, shown above the findings.
+
+**Residual risk.** A firewalled-but-healthy host is indistinguishable from an
+absent one. We report the ambiguity rather than resolving it, which is the
+honest option.
+
+### T5 — The report leaks more than intended
 
 *The HTML report is emailed to a prospect and reveals internal topology.*
 
@@ -143,7 +168,7 @@ operator's own inventory, written to their own disk, for their own use.
 Anonymization applies at the point where data might leave their control — the
 snapshot — not to the report they read themselves.
 
-### T5 — Supply-chain compromise of a release
+### T6 — Supply-chain compromise of a release
 
 *A trojaned binary is distributed and run with intent against GPU clusters.*
 
@@ -160,7 +185,7 @@ snapshot — not to the report they read themselves.
 **Residual risk.** Compromise of the GitHub Actions environment or a Go module
 dependency. Partially mitigated by pinned actions and SBOM review.
 
-### T6 — Misuse: scanning without authorization
+### T7 — Misuse: scanning without authorization
 
 *Someone points ray-guard at infrastructure they do not own.*
 

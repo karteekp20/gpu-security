@@ -15,6 +15,14 @@ import (
 
 var update = flag.Bool("update", false, "rewrite the golden files")
 
+func respondedHosts(hosts ...string) []domain.HostSummary {
+	out := make([]domain.HostSummary, 0, len(hosts))
+	for _, h := range hosts {
+		out = append(out, domain.HostSummary{Host: h, State: domain.HostResponded})
+	}
+	return out
+}
+
 func fixture() domain.ScanResult {
 	start := time.Date(2026, 9, 20, 14, 0, 0, 0, time.UTC)
 	findings := []domain.Finding{
@@ -32,12 +40,12 @@ func fixture() domain.ScanResult {
 			Detail:      "Certificate on port 8888 is self-signed (expires 2027-01-01)",
 			Remediation: "Replace the certificate with one issued by a trusted CA, matching the service hostname and within its validity window."},
 	}
-	return domain.NewScanResult(start, start.Add(12*time.Second), 4, findings)
+	return domain.NewScanResult(start, start.Add(12*time.Second), respondedHosts("10.0.0.5", "10.0.0.6", "10.0.0.7", "10.0.0.8"), findings)
 }
 
 func cleanFixture() domain.ScanResult {
 	start := time.Date(2026, 9, 20, 14, 0, 0, 0, time.UTC)
-	return domain.NewScanResult(start, start.Add(3*time.Second), 4, nil)
+	return domain.NewScanResult(start, start.Add(3*time.Second), respondedHosts("10.0.0.5", "10.0.0.6", "10.0.0.7", "10.0.0.8"), nil)
 }
 
 func goldenCheck(t *testing.T, name string, got []byte) {
@@ -125,7 +133,7 @@ func TestHTMLIncludesShadowRayContextOnlyWhenRelevant(t *testing.T) {
 			kept = append(kept, f)
 		}
 	}
-	noRay = domain.NewScanResult(noRay.StartedAt, noRay.CompletedAt, noRay.TargetsScanned, kept)
+	noRay = domain.NewScanResult(noRay.StartedAt, noRay.CompletedAt, respondedHosts("10.0.0.5", "10.0.0.6"), kept)
 	if strings.Contains(renderString(t, noRay), "ShadowRay") {
 		t.Error("the ShadowRay section should not appear without a Ray finding")
 	}

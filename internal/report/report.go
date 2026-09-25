@@ -27,14 +27,20 @@ type hostGroup struct {
 	Findings []domain.Finding
 }
 
+// maxUnreachableListed caps the coverage-gap list. A dark /24 produces 254
+// entries, which would bury the report it is supposed to qualify.
+const maxUnreachableListed = 10
+
 type view struct {
 	domain.ScanResult
-	Started       string
-	Duration      string
-	SevCounts     []sevCount
-	FixFirst      []domain.Finding
-	Hosts         []hostGroup
-	HasRayFinding bool
+	Started          string
+	Duration         string
+	SevCounts        []sevCount
+	FixFirst         []domain.Finding
+	Hosts            []hostGroup
+	HasRayFinding    bool
+	UnreachableShown []domain.HostSummary
+	UnreachableExtra int
 }
 
 func newView(r domain.ScanResult) view {
@@ -71,14 +77,23 @@ func newView(r domain.ScanResult) view {
 		}
 	}
 
+	shown := r.Unreachable
+	extra := 0
+	if len(shown) > maxUnreachableListed {
+		extra = len(shown) - maxUnreachableListed
+		shown = shown[:maxUnreachableListed]
+	}
+
 	return view{
-		ScanResult:    r,
-		Started:       r.StartedAt.UTC().Format("2006-01-02 15:04 UTC"),
-		Duration:      formatDuration(r.CompletedAt.Sub(r.StartedAt)),
-		SevCounts:     counts,
-		FixFirst:      fixFirst,
-		Hosts:         hosts,
-		HasRayFinding: hasRay,
+		ScanResult:       r,
+		Started:          r.StartedAt.UTC().Format("2006-01-02 15:04 UTC"),
+		Duration:         formatDuration(r.CompletedAt.Sub(r.StartedAt)),
+		SevCounts:        counts,
+		FixFirst:         fixFirst,
+		Hosts:            hosts,
+		HasRayFinding:    hasRay,
+		UnreachableShown: shown,
+		UnreachableExtra: extra,
 	}
 }
 
@@ -121,15 +136,28 @@ func RenderHTML(w io.Writer, r domain.ScanResult) error {
 func PrintSummary(w io.Writer, r domain.ScanResult) {
 	v := newView(r)
 	fmt.Fprintf(w, "\n=== GPU Risk & Isolation Report ===\n")
-	fmt.Fprintf(w, "Grade: %s (score %d/100)\n", v.Grade, v.Score)
+	if r.Inconclusive() {
+		fmt.Fprintf(w, "Grade: %s - INCONCLUSIVE\n", v.Grade)
+	} else {
+		fmt.Fprintf(w, "Grade: %s (score %d/100)\n", v.Grade, v.Score)
+	}
 	if v.GradeReason != "" {
 		fmt.Fprintf(w, "%s\n", wrap(v.GradeReason, 76))
 	}
-	fmt.Fprintf(w, "Targets scanned: %d   Hosts with findings: %d\n", v.TargetsScanned, v.HostsWithFindings)
+	fmt.Fprintf(w, "Targets scanned: %d   Responded: %d   Hosts with findings: %d\n",
+		v.TargetsScanned, v.HostsResponded, v.HostsWithFindings)
+	if v.HostsUnanswered > 0 || v.HostsUnresolved > 0 {
+		fmt.Fprintf(w, "Not assessed: %d no response, %d unresolved\n",
+			v.HostsUnanswered, v.HostsUnresolved)
+	}
 	for _, c := range v.SevCounts {
 		fmt.Fprintf(w, "  %-8s %d\n", c.Severity, c.Count)
 	}
 	if len(v.Findings) == 0 {
+		if r.Inconclusive() {
+			fmt.Fprintf(w, "\nNothing was assessed. Do not read this as a clean result.\n")
+			return
+		}
 		fmt.Fprintf(w, "\nNo exposure findings on the scanned targets.\n")
 		return
 	}
@@ -172,8 +200,23 @@ func wrap(s string, width int) string {
 	return b.String()
 }
 
+// gradeClass turns a grade into a CSS-safe suffix: "A+" -> "Aplus",
+// "N/A" -> "NA".
+func gradeClass(g domain.Grade) string {
+	var b strings.Builder
+	for _, r := range string(g) {
+		switch {
+		case r == '+':
+			b.WriteString("plus")
+		case (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9'):
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
 var htmlTmpl = template.Must(template.New("r").Funcs(template.FuncMap{
-	"gradeClass": func(g domain.Grade) string { return strings.ReplaceAll(string(g), "+", "plus") },
+	"gradeClass": gradeClass,
 }).Parse(`<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -191,6 +234,11 @@ p{margin:.5rem 0}
 .hero{display:flex;gap:1.25rem;align-items:center;background:var(--card);border:1px solid var(--line);border-radius:.6rem;padding:1.1rem 1.25rem}
 .grade{font-size:3rem;font-weight:700;line-height:1;min-width:3.2rem;text-align:center}
 .g-Fplus,.g-F{color:#c0392b}.g-C{color:#e67e22}.g-B{color:#d4a017}.g-A,.g-Aplus{color:#2e7d32}
+.g-NA{color:var(--muted);font-size:1.9rem}
+.warn{background:var(--card);border-left:3px solid #e67e22;border-radius:0 .4rem .4rem 0;padding:.9rem 1.1rem;margin-top:1rem;font-size:.92rem}
+.warn strong{color:#e67e22}
+.warn ul{margin:.5rem 0 0;padding-left:1.2rem}
+.warn code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.88em}
 .hero .reason{margin:0 0 .4rem;font-weight:600}
 .hero .facts{margin:0;color:var(--muted);font-size:.9rem}
 .counts{margin:1rem 0 0;padding:0;list-style:none;display:flex;flex-wrap:wrap;gap:.4rem}
@@ -224,10 +272,21 @@ th{color:var(--muted);font-weight:600;font-size:.85rem}
   <div class="grade g-{{gradeClass .Grade}}">{{.Grade}}</div>
   <div>
     <p class="reason">{{.GradeReason}}</p>
-    <p class="facts">Score {{.Score}}/100 &middot; {{.TargetsScanned}} target(s) scanned in {{.Duration}} &middot; {{.HostsWithFindings}} host(s) with findings</p>
+    <p class="facts">{{if not .Inconclusive}}Score {{.Score}}/100 &middot; {{end}}{{.TargetsScanned}} target(s) in {{.Duration}} &middot; {{.HostsResponded}} responded &middot; {{.HostsWithFindings}} with findings</p>
   </div>
 </div>
 {{if .SevCounts}}<ul class="counts">{{range .SevCounts}}<li><span class="sev {{.Severity}}">{{.Severity}}</span> {{.Count}}</li>{{end}}</ul>{{end}}
+
+{{if .UnreachableShown}}
+<div class="warn">
+<p><strong>Coverage gap &mdash; {{len .Unreachable}} target(s) were not assessed.</strong>
+{{if .Inconclusive}}Nothing responded, so this scan verified nothing. Do not read it as a clean
+result.{{else}}The grade above covers only the targets that responded.{{end}}</p>
+<ul>
+{{range .UnreachableShown}}<li><code>{{.Host}}</code> &mdash; {{if eq .State "unresolved"}}name could not be resolved{{else}}no response (firewalled, powered off, or unreachable from here){{end}}</li>
+{{end}}{{if .UnreachableExtra}}<li>&hellip; and {{.UnreachableExtra}} more (see <code>report.json</code>)</li>{{end}}</ul>
+</div>
+{{end}}
 
 {{if .FixFirst}}
 <h2>Fix these first</h2>
@@ -268,6 +327,7 @@ job was submitted and no code was executed against your infrastructure.</p>
 </div>
 </div>
 {{end}}
+{{else if .Inconclusive}}<p>Nothing was assessed, so there is nothing to report. This is not a clean result.</p>
 {{else}}<p>No exposure findings on the scanned targets.</p>{{end}}
 
 <h2>Scope &amp; method</h2>

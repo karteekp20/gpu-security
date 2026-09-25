@@ -44,6 +44,32 @@ type TLSState struct {
 	NotAfter string `json:"not_after,omitempty"`
 }
 
+// HostState records whether we actually learned anything about a host.
+//
+// This distinction is load-bearing. "We scanned it and found nothing" and "we
+// never reached it" produce the same empty finding list, and reporting both as
+// a clean result is a false all-clear - the single most damaging thing a
+// security scanner can say. A typo'd hostname must never grade A+.
+type HostState string
+
+const (
+	// HostResponded means at least one port gave a definitive answer, open or
+	// refused. The host is alive and an empty finding list is real evidence.
+	HostResponded HostState = "responded"
+	// HostNoResponse means every probe timed out. That may be a firewall doing
+	// its job or a host that does not exist; we cannot tell, and must not
+	// claim either.
+	HostNoResponse HostState = "no-response"
+	// HostUnresolved means DNS lookup failed - we never reached the network.
+	HostUnresolved HostState = "unresolved"
+)
+
+// HostSummary is the per-target coverage record behind the scan's headline.
+type HostSummary struct {
+	Host  string    `json:"host"`
+	State HostState `json:"state"`
+}
+
 // Observation is a benign, read-only fact discovered about a target.
 // It never contains payload (metadata-only-guard skill / CLAUDE.md P3).
 // Every field here is existence, exposure, configuration, or version state.
@@ -71,11 +97,19 @@ type Finding struct {
 	CVEs        []string `json:"cves,omitempty"`
 }
 
+// GradeInconclusive is used when no target responded, so there is no evidence
+// to grade. It is deliberately not a passing grade.
+const GradeInconclusive Grade = "N/A"
+
 type ScanResult struct {
 	ScannerVersion    string           `json:"scanner_version"`
 	StartedAt         time.Time        `json:"started_at"`
 	CompletedAt       time.Time        `json:"completed_at"`
 	TargetsScanned    int              `json:"targets_scanned"`
+	HostsResponded    int              `json:"hosts_responded"`
+	HostsUnanswered   int              `json:"hosts_unanswered"`
+	HostsUnresolved   int              `json:"hosts_unresolved"`
+	Unreachable       []HostSummary    `json:"unreachable,omitempty"`
 	HostsWithFindings int              `json:"hosts_with_findings"`
 	Findings          []Finding        `json:"findings"`
 	Summary           map[Severity]int `json:"summary"`
@@ -84,26 +118,54 @@ type ScanResult struct {
 	GradeReason       string           `json:"grade_reason"`
 }
 
-func NewScanResult(start, end time.Time, targets int, findings []Finding) ScanResult {
+// Inconclusive reports whether the scan reached anything at all. A scan that
+// reached nothing proves nothing, however empty its finding list.
+func (r ScanResult) Inconclusive() bool { return r.HostsResponded == 0 }
+
+// PartialCoverage reports whether some targets answered and others did not -
+// the grade is then real but covers less than the operator asked for.
+func (r ScanResult) PartialCoverage() bool {
+	return r.HostsResponded > 0 && (r.HostsUnanswered > 0 || r.HostsUnresolved > 0)
+}
+
+func NewScanResult(start, end time.Time, hosts []HostSummary, findings []Finding) ScanResult {
 	summary := map[Severity]int{}
-	hosts := map[string]struct{}{}
+	affected := map[string]struct{}{}
 	for _, f := range findings {
 		summary[f.Severity]++
-		hosts[f.Host] = struct{}{}
+		affected[f.Host] = struct{}{}
 	}
-	score, grade := gradeFor(summary)
-	return ScanResult{
+
+	r := ScanResult{
 		ScannerVersion: Version,
-		StartedAt:      start, CompletedAt: end, TargetsScanned: targets,
-		HostsWithFindings: len(hosts),
+		StartedAt:      start, CompletedAt: end,
+		TargetsScanned:    len(hosts),
+		HostsWithFindings: len(affected),
 		Findings:          findings, Summary: summary,
-		Score: score, Grade: grade,
-		GradeReason: gradeReason(grade, findings),
 	}
+	for _, h := range hosts {
+		switch h.State {
+		case HostResponded:
+			r.HostsResponded++
+		case HostUnresolved:
+			r.HostsUnresolved++
+			r.Unreachable = append(r.Unreachable, h)
+		default:
+			r.HostsUnanswered++
+			r.Unreachable = append(r.Unreachable, h)
+		}
+	}
+
+	r.Score, r.Grade = gradeFor(summary, r.HostsResponded)
+	r.GradeReason = gradeReason(r.Grade, findings, r)
+	return r
 }
 
 // gradeFor is PROVISIONAL (CLAUDE.md 10.0) - validate thresholds with buyers.
-func gradeFor(s map[Severity]int) (int, Grade) {
+//
+// responded gates the clean grades: an empty finding list only means "clean"
+// if we actually reached something.
+func gradeFor(s map[Severity]int, responded int) (int, Grade) {
 	switch {
 	case s[Critical] > 0:
 		return 40, "F"
@@ -113,6 +175,8 @@ func gradeFor(s map[Severity]int) (int, Grade) {
 		return 78, "B"
 	case s[Low] > 0 || s[Info] > 0:
 		return 90, "A"
+	case responded == 0:
+		return 0, GradeInconclusive
 	default:
 		return 100, "A+"
 	}
@@ -120,10 +184,25 @@ func gradeFor(s map[Severity]int) (int, Grade) {
 
 // gradeReason states, in one plain sentence, which finding drove the grade.
 // A grade a buyer cannot trace back to a specific cause is not persuasive.
-func gradeReason(g Grade, findings []Finding) string {
+func gradeReason(g Grade, findings []Finding, r ScanResult) string {
 	switch g {
+	case GradeInconclusive:
+		if r.TargetsScanned == 0 {
+			return "No targets were scanned."
+		}
+		if r.HostsUnresolved == r.TargetsScanned {
+			return "No result: none of the target names could be resolved. " +
+				"Check the hostnames and your DNS - this is not a clean result."
+		}
+		return "No result: no target responded, so nothing was verified. " +
+			"The hosts may be firewalled, powered off, or unreachable from here - " +
+			"this is not a clean result."
 	case "A+":
-		return "No exposure was observed on the scanned targets."
+		s := "No exposure was observed on the scanned targets."
+		if r.PartialCoverage() {
+			s += " Note that some targets did not respond and were not assessed."
+		}
+		return s
 	case "A":
 		return "Only low-severity or informational exposure was observed."
 	}
@@ -188,7 +267,12 @@ func WorstFinding(findings []Finding) *Finding {
 }
 
 // ExitCode maps the worst observed severity to a process exit code so a tenant
-// can gate their own CI on it. 0 = clean; 1 = runtime error; 2 = usage error.
+// can gate their own CI on it. 0 = clean; 1 = runtime error; 2 = usage error;
+// 7 = inconclusive.
+//
+// Inconclusive is deliberately non-zero. A pipeline whose scan target moved,
+// or whose DNS changed, must fail loudly rather than pass green forever on a
+// scan that reached nothing.
 func (r ScanResult) ExitCode() int {
 	switch {
 	case r.Summary[Critical] > 0:
@@ -199,6 +283,8 @@ func (r ScanResult) ExitCode() int {
 		return 4
 	case r.Summary[Low] > 0 || r.Summary[Info] > 0:
 		return 3
+	case r.Inconclusive():
+		return 7
 	default:
 		return 0
 	}

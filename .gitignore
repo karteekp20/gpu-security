@@ -10,3 +10,6 @@
 /report/
 /report-*/
 snapshot*.json
+
+# `go build ./cmd/...` drops the binary here rather than in bin/
+/ray-guard

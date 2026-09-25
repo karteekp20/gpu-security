@@ -161,7 +161,8 @@ func TestNoPayloadReachesAnyOutput(t *testing.T) {
 		{Service: "ray-dashboard", Port: port, Scheme: "http", Path: "/"},
 		{Service: "vllm", Port: port, Scheme: "http", Path: "/v1/models"},
 	})
-	obs := scanner.ProbeHost(context.Background(), host)
+	hostScan := scanner.ProbeHost(context.Background(), host)
+	obs := hostScan.Observations
 	if len(obs) == 0 {
 		t.Fatal("precondition failed: the scan found nothing, so this test would pass vacuously")
 	}
@@ -169,7 +170,8 @@ func TestNoPayloadReachesAnyOutput(t *testing.T) {
 	if len(findings) == 0 {
 		t.Fatal("precondition failed: no findings, so this test would pass vacuously")
 	}
-	result := domain.NewScanResult(time.Now().Add(-time.Second), time.Now(), 1, findings)
+	result := domain.NewScanResult(time.Now().Add(-time.Second), time.Now(),
+		[]domain.HostSummary{hostScan.Summary()}, findings)
 
 	dir := t.TempDir()
 	if err := report.Write(dir, result); err != nil {

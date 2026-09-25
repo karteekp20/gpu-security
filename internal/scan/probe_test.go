@@ -29,7 +29,7 @@ func serve(t *testing.T, h http.HandlerFunc) (string, int) {
 func probeOne(t *testing.T, host string, checks []Check) []domain.Observation {
 	t.Helper()
 	s := NewWithChecks(2*time.Second, checks)
-	return s.ProbeHost(context.Background(), host)
+	return s.ProbeHost(context.Background(), host).Observations
 }
 
 func TestProbeIdentifiesUnauthenticatedService(t *testing.T) {
@@ -317,6 +317,89 @@ func TestProbeBucketAddsSchemeAndRejectsGarbage(t *testing.T) {
 	}
 	if !o.TLS.Enabled {
 		t.Error("a bucket URL without a scheme should default to https")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Host reachability - the difference between "nothing here" and "no idea"
+// ---------------------------------------------------------------------------
+
+// A name that does not resolve must be reported as such. Before this existed,
+// a typo'd hostname produced an empty finding list that graded A+, which is
+// the worst thing a security scanner can say.
+func TestUnresolvableHostIsReportedNotSilentlyClean(t *testing.T) {
+	s := NewWithChecks(2*time.Second, DefaultChecks())
+	got := s.ProbeHost(context.Background(), "ray-guard-nonexistent-host.invalid")
+
+	if got.State != domain.HostUnresolved {
+		t.Errorf("want %s, got %s", domain.HostUnresolved, got.State)
+	}
+	if len(got.Observations) != 0 {
+		t.Errorf("an unresolvable host yields no observations, got %+v", got.Observations)
+	}
+}
+
+// A host that refuses connections is alive, and an empty result from it is
+// real evidence of a clean host.
+func TestRefusingHostCountsAsResponded(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	_, portStr, _ := net.SplitHostPort(l.Addr().String())
+	port, _ := strconv.Atoi(portStr)
+	l.Close() // nothing listening now, so connects are refused
+
+	s := NewWithChecks(2*time.Second, []Check{{"ray-dashboard", port, "http", "/"}})
+	got := s.ProbeHost(context.Background(), "127.0.0.1")
+
+	if got.State != domain.HostResponded {
+		t.Errorf("a refused connection is an answer; want %s, got %s", domain.HostResponded, got.State)
+	}
+	if len(got.Observations) != 0 {
+		t.Errorf("nothing is listening, so there should be no observations: %+v", got.Observations)
+	}
+}
+
+func TestRespondingHostWithAnOpenPort(t *testing.T) {
+	host, port := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	got := NewWithChecks(2*time.Second, []Check{{"ray-dashboard", port, "http", "/"}}).
+		ProbeHost(context.Background(), host)
+
+	if got.State != domain.HostResponded {
+		t.Errorf("want %s, got %s", domain.HostResponded, got.State)
+	}
+	if got.Summary().Host != host || got.Summary().State != domain.HostResponded {
+		t.Errorf("summary does not match the scan: %+v", got.Summary())
+	}
+}
+
+// An address that silently drops packets cannot be distinguished from a
+// firewalled host, and must not be reported as either clean or exposed.
+func TestSilentHostIsNoResponse(t *testing.T) {
+	// TEST-NET-2, reserved for documentation - nothing answers.
+	s := NewWithChecks(600*time.Millisecond, []Check{{"ray-dashboard", 8265, "http", "/"}})
+	got := s.ProbeHost(context.Background(), "198.51.100.1")
+
+	if got.State == domain.HostResponded {
+		t.Errorf("a dark address must not count as responded: %+v", got)
+	}
+	if len(got.Observations) != 0 {
+		t.Errorf("expected no observations from a dark address, got %+v", got.Observations)
+	}
+}
+
+func TestIPLiteralsSkipResolution(t *testing.T) {
+	s := NewWithChecks(time.Second, nil)
+	for _, ip := range []string{"127.0.0.1", "::1", "10.1.2.3"} {
+		if !s.resolves(context.Background(), ip) {
+			t.Errorf("%s is an IP literal and must always resolve", ip)
+		}
+	}
+	if s.resolves(context.Background(), "ray-guard-nonexistent-host.invalid") {
+		t.Error("a .invalid name must not resolve")
 	}
 }
 

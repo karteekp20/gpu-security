@@ -58,7 +58,20 @@ For a tenant-side engagement, add `-buckets` if object storage is in scope.
 > patterns as a backstop, but the rule is simpler: client output lives in
 > `~/assessments/`, never in the working tree.
 
-**3. Read the report together, in this order:**
+**3. Check coverage before you read findings.** The report says how many
+targets responded. If some did not, that is in an orange "coverage gap" box
+naming each one — read it out rather than skipping past it:
+
+> "Three of the twelve didn't answer, so this grade only covers nine. Are
+> those hosts down, firewalled from where I'm sitting, or did I get the
+> addresses wrong?"
+
+Often the answer is that you were scanning from the wrong side of a firewall,
+which is itself worth knowing. If **nothing** responded, the report says
+`N/A — INCONCLUSIVE` and there is no result to discuss; fix the access problem
+and re-run rather than presenting it.
+
+**4. Read the report together, in this order:**
 
 - **Grade and the one-line rationale.** Let it land before moving on.
 - **"Fix these first."** Walk the list. Every item has a remediation — use it,
@@ -67,16 +80,16 @@ For a tenant-side engagement, add `-buckets` if object storage is in scope.
   execution rather than a hardening gap ([`demo.md`](demo.md) has the wording).
 - **The footer.** Read-only, one GET, no payload — before they ask.
 
-**4. Do not fix anything for them.** You are not authorized to change their
+**5. Do not fix anything for them.** You are not authorized to change their
 systems and you do not want to be the last person who touched a cluster before
 something broke. Hand them the remediation; let them run it.
 
-**5. Write down every disagreement.** If they dispute a severity, a grade, or
+**6. Write down every disagreement.** If they dispute a severity, a grade, or
 whether something is even a problem — that is the most valuable output of the
 whole exercise. Grade thresholds are explicitly provisional (CLAUDE.md §10.0)
 so this feedback can move them.
 
-**6. Ask the two gate questions, in these words.** Do not infer the answers
+**7. Ask the two gate questions, in these words.** Do not infer the answers
 from enthusiasm:
 
 > "Would you pay for this report?"
@@ -86,7 +99,7 @@ from enthusiasm:
 An awkward question honestly answered is worth more than a warm meeting you
 have to interpret afterwards. A "maybe" is a no — log it as a no.
 
-**7. Ask about the benchmark snapshot.** Opt-in, and this is the moment:
+**8. Ask about the benchmark snapshot.** Opt-in, and this is the moment:
 
 > "There's an anonymized version — rule IDs and severities, hostnames replaced
 > with salted hashes. It feeds an industry benchmark we want to publish. Can I

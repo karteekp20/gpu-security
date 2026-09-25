@@ -36,10 +36,15 @@ type Record struct {
 
 // Snapshot is the anonymized artifact written to disk.
 type Snapshot struct {
-	Schema            string         `json:"schema"`
-	ScannerVersion    string         `json:"scanner_version"`
-	ScannedAt         string         `json:"scanned_at"` // truncated to the hour
-	TargetsScanned    int            `json:"targets_scanned"`
+	Schema         string `json:"schema"`
+	ScannerVersion string `json:"scanner_version"`
+	ScannedAt      string `json:"scanned_at"` // truncated to the hour
+	TargetsScanned int    `json:"targets_scanned"`
+	// HostsResponded is what makes the rest of this record meaningful. An
+	// aggregate index that silently averages in scans which reached nothing
+	// would report the industry as far healthier than it is.
+	HostsResponded    int            `json:"hosts_responded"`
+	Inconclusive      bool           `json:"inconclusive"`
 	HostsWithFindings int            `json:"hosts_with_findings"`
 	Grade             domain.Grade   `json:"grade"`
 	Score             int            `json:"score"`
@@ -84,6 +89,8 @@ func Build(r domain.ScanResult, now time.Time) (Snapshot, error) {
 		ScannerVersion:    r.ScannerVersion,
 		ScannedAt:         now.UTC().Truncate(time.Hour).Format(time.RFC3339),
 		TargetsScanned:    r.TargetsScanned,
+		HostsResponded:    r.HostsResponded,
+		Inconclusive:      r.Inconclusive(),
 		HostsWithFindings: r.HostsWithFindings,
 		Grade:             r.Grade,
 		Score:             r.Score,

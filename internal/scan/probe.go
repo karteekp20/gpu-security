@@ -9,11 +9,13 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"gpusecurity/internal/domain"
@@ -142,11 +144,36 @@ func NewWithChecks(timeout time.Duration, checks []Check) *Scanner {
 	return &Scanner{timeout: timeout, checks: checks, client: mk(false), insecure: mk(true)}
 }
 
+// HostScan is everything one target yielded: whether we reached it at all,
+// and what we saw if we did. The state matters as much as the observations -
+// an empty observation list from a host that never answered is not evidence
+// of a clean host (see domain.HostState).
+type HostScan struct {
+	Host         string
+	State        domain.HostState
+	Observations []domain.Observation
+}
+
+// Summary reduces the scan to its coverage record.
+func (h HostScan) Summary() domain.HostSummary {
+	return domain.HostSummary{Host: h.Host, State: h.State}
+}
+
 // ProbeHost probes every distinct port once, concurrently, then runs the
 // checks bound to each open port. Probing per-port rather than per-check
 // avoids dialing a shared port (8000 is both vLLM and Triton) twice and keeps
 // a host with filtered ports from costing timeout x len(checks) seconds.
-func (s *Scanner) ProbeHost(ctx context.Context, host string) []domain.Observation {
+func (s *Scanner) ProbeHost(ctx context.Context, host string) HostScan {
+	result := HostScan{Host: host, State: domain.HostNoResponse}
+
+	// Resolve once, up front. Doing it here rather than implicitly on every
+	// dial both saves repeated lookups and - the reason it matters - lets us
+	// tell "this name does not exist" apart from "this host is firewalled".
+	if !s.resolves(ctx, host) {
+		result.State = domain.HostUnresolved
+		return result
+	}
+
 	byPort := map[int][]Check{}
 	var ports []int
 	for _, c := range s.checks {
@@ -160,6 +187,7 @@ func (s *Scanner) ProbeHost(ctx context.Context, host string) []domain.Observati
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	obs := make([][]domain.Observation, len(ports))
+	responded := false
 	for i, port := range ports {
 		i, port := i, port
 		wg.Add(1)
@@ -168,6 +196,11 @@ func (s *Scanner) ProbeHost(ctx context.Context, host string) []domain.Observati
 			state := s.portState(ctx, host, port)
 			mu.Lock()
 			defer mu.Unlock()
+			// A refused connection is an answer: the host is alive and simply
+			// is not listening there. Only an all-timeout host is a blank.
+			if state == domain.PortOpen || state == domain.PortClosed {
+				responded = true
+			}
 			if state != domain.PortOpen {
 				return
 			}
@@ -176,16 +209,38 @@ func (s *Scanner) ProbeHost(ctx context.Context, host string) []domain.Observati
 	}
 	wg.Wait()
 
-	var all []domain.Observation
-	for _, o := range obs {
-		all = append(all, o...)
+	if responded {
+		result.State = domain.HostResponded
 	}
-	return all
+	for _, o := range obs {
+		result.Observations = append(result.Observations, o...)
+	}
+	return result
+}
+
+// resolves reports whether the target can be turned into an address. IP
+// literals always resolve; names go to the resolver once.
+func (s *Scanner) resolves(ctx context.Context, host string) bool {
+	if _, err := netip.ParseAddr(host); err == nil {
+		return true
+	}
+	ctx, cancel := context.WithTimeout(ctx, s.timeout)
+	defer cancel()
+	addrs, err := net.DefaultResolver.LookupHost(ctx, host)
+	return err == nil && len(addrs) > 0
 }
 
 // portState distinguishes closed (the host refused) from filtered (something
-// dropped the packet). Both are "not exposed", but they mean different things
-// to an operator reading the report.
+// dropped the packet, or the host is not there at all). Both are "not
+// exposed", but they mean different things to an operator reading the report -
+// and only "closed" proves a host is alive.
+//
+// The bar for "closed" is deliberately narrow: a TCP RST, and nothing else.
+// "No route to host" and "host unreachable" also arrive promptly rather than
+// as timeouts, but they come from the network telling us the host is absent,
+// not from the host itself. Treating them as an answer would let an empty
+// subnet masquerade as a clean one - which is exactly the false all-clear this
+// whole distinction exists to prevent.
 func (s *Scanner) portState(ctx context.Context, host string, port int) domain.PortState {
 	d := net.Dialer{Timeout: s.timeout}
 	conn, err := d.DialContext(ctx, "tcp", net.JoinHostPort(host, strconv.Itoa(port)))
@@ -193,14 +248,10 @@ func (s *Scanner) portState(ctx context.Context, host string, port int) domain.P
 		_ = conn.Close()
 		return domain.PortOpen
 	}
-	var nerr net.Error
-	if errors.As(err, &nerr) && nerr.Timeout() {
-		return domain.PortFiltered
+	if errors.Is(err, syscall.ECONNREFUSED) {
+		return domain.PortClosed
 	}
-	if errors.Is(err, context.DeadlineExceeded) {
-		return domain.PortFiltered
-	}
-	return domain.PortClosed
+	return domain.PortFiltered
 }
 
 func (s *Scanner) probeOpenPort(ctx context.Context, host string, port int, checks []Check) []domain.Observation {

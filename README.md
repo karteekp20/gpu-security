@@ -74,13 +74,18 @@ Wire it into your own CI — the exit code encodes the worst severity found.
 
 | Code | Meaning |
 |---|---|
-| 0 | No findings |
+| 0 | No findings, and at least one target responded |
 | 1 | Runtime error |
 | 2 | Usage error |
 | 3 | Worst finding was low/info |
 | 4 | Worst finding was medium |
 | 5 | Worst finding was high |
 | 6 | Worst finding was critical |
+| 7 | **Inconclusive** — no target responded, so nothing was verified |
+
+Exit 7 is deliberately non-zero. A scan that reached nothing proves nothing,
+however empty its finding list — if your targets move or DNS changes, the
+pipeline should fail rather than pass green forever on a scan of nowhere.
 
 ### Detections
 

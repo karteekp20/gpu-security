@@ -65,8 +65,7 @@ func TestMain(m *testing.M) {
 func scanHost(t *testing.T, host string) []domain.Finding {
 	t.Helper()
 	s := scan.New(probeTimeout)
-	obs := s.ProbeHost(context.Background(), host)
-	return scan.Detect(obs)
+	return scan.Detect(s.ProbeHost(context.Background(), host).Observations)
 }
 
 func ruleIDs(findings []domain.Finding) []string {
@@ -124,9 +123,11 @@ func TestRealRayDashboardIsDetected(t *testing.T) {
 // with an exposed Ray dashboard must come out at the bottom of the grading
 // matrix (CLAUDE.md 10.0) with a rationale that names the cause.
 func TestRealRayGradesF(t *testing.T) {
-	findings := scanHost(t, addrRay)
+	hs := scan.New(probeTimeout).ProbeHost(context.Background(), addrRay)
+	findings := scan.Detect(hs.Observations)
 	now := time.Now()
-	result := domain.NewScanResult(now.Add(-time.Second), now, 1, findings)
+	result := domain.NewScanResult(now.Add(-time.Second), now,
+		[]domain.HostSummary{hs.Summary()}, findings)
 
 	if result.Grade != "F" {
 		t.Errorf("an exposed Ray dashboard must grade F, got %s (score %d)", result.Grade, result.Score)
@@ -258,7 +259,7 @@ func TestCIDRDiscoveryFindsTheStack(t *testing.T) {
 		go func() {
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			results <- s.ProbeHost(context.Background(), h)
+			results <- s.ProbeHost(context.Background(), h).Observations
 		}()
 	}
 	for range hosts {
@@ -284,6 +285,64 @@ func TestCIDRDiscoveryFindsTheStack(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Coverage - "we reached nothing" must never look like "we found nothing"
+// ---------------------------------------------------------------------------
+
+// The highest-consequence failure this tool can have is a false all-clear.
+// These run against the live stack so the distinction is proven end to end,
+// not just in unit tests over hand-built host lists.
+func TestCoverageIsDistinguishedFromCleanliness(t *testing.T) {
+	s := scan.New(2 * time.Second)
+	ctx := context.Background()
+
+	t.Run("live exposed host responds", func(t *testing.T) {
+		if got := s.ProbeHost(ctx, addrRay).State; got != domain.HostResponded {
+			t.Errorf("real Ray must register as responded, got %s", got)
+		}
+	})
+
+	t.Run("unused address in the same subnet does not respond", func(t *testing.T) {
+		// .200 is inside the compose subnet but no container holds it.
+		if got := s.ProbeHost(ctx, "172.31.77.200").State; got == domain.HostResponded {
+			t.Errorf("an unused address must not register as responded, got %s", got)
+		}
+	})
+
+	t.Run("a scan that reached nothing is inconclusive, not A+", func(t *testing.T) {
+		hs := s.ProbeHost(ctx, "172.31.77.200")
+		now := time.Now()
+		r := domain.NewScanResult(now.Add(-time.Second), now,
+			[]domain.HostSummary{hs.Summary()}, scan.Detect(hs.Observations))
+
+		if r.Grade == "A+" {
+			t.Error("FALSE ALL-CLEAR: an unreachable host graded A+")
+		}
+		if !r.Inconclusive() || r.ExitCode() != 7 {
+			t.Errorf("want inconclusive with exit 7, got grade %s exit %d", r.Grade, r.ExitCode())
+		}
+	})
+
+	t.Run("partial coverage is disclosed alongside a real grade", func(t *testing.T) {
+		live := s.ProbeHost(ctx, addrRay)
+		dark := s.ProbeHost(ctx, "172.31.77.200")
+		now := time.Now()
+		r := domain.NewScanResult(now.Add(-time.Second), now,
+			[]domain.HostSummary{live.Summary(), dark.Summary()},
+			scan.Detect(live.Observations))
+
+		if r.Grade != "F" {
+			t.Errorf("the exposed host still drives the grade, got %s", r.Grade)
+		}
+		if !r.PartialCoverage() {
+			t.Error("a target that did not answer must be disclosed as a coverage gap")
+		}
+		if len(r.Unreachable) != 1 {
+			t.Errorf("expected 1 unreachable target recorded, got %d", len(r.Unreachable))
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
 // P3, against real responses
 // ---------------------------------------------------------------------------
 
@@ -296,7 +355,7 @@ func TestNoPayloadFromRealServicesReachesFindings(t *testing.T) {
 	s := scan.New(probeTimeout)
 	var obs []domain.Observation
 	for _, h := range hosts {
-		obs = append(obs, s.ProbeHost(context.Background(), h)...)
+		obs = append(obs, s.ProbeHost(context.Background(), h).Observations...)
 	}
 	findings := scan.Detect(obs)
 	if len(findings) == 0 {
