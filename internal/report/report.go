@@ -101,14 +101,24 @@ func newView(r domain.ScanResult) view {
 // Both are self-contained: the HTML embeds its own styles and references no
 // external asset, so it can be opened on an air-gapped workstation or mailed
 // to a security lead as a single file.
+// reportPerm is owner-only. A report lists exactly which of a client's
+// services are exposed and unauthenticated - it is a map for anyone who wants
+// in. World-readable is the wrong default for that on any shared machine; the
+// operator can widen it deliberately if they want to share.
+const (
+	reportPerm = 0o600
+	reportDir  = 0o700
+)
+
 func Write(outDir string, r domain.ScanResult) error {
-	if err := os.MkdirAll(outDir, 0o755); err != nil {
+	if err := os.MkdirAll(outDir, reportDir); err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(outDir, "report.json"), MarshalJSON(r), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(outDir, "report.json"), MarshalJSON(r), reportPerm); err != nil {
 		return err
 	}
-	f, err := os.Create(filepath.Join(outDir, "report.html"))
+	f, err := os.OpenFile(filepath.Join(outDir, "report.html"),
+		os.O_WRONLY|os.O_CREATE|os.O_TRUNC, reportPerm)
 	if err != nil {
 		return err
 	}

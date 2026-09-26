@@ -114,7 +114,7 @@ func Write(path string, r domain.ScanResult, now time.Time) error {
 		return err
 	}
 	if dir := filepath.Dir(path); dir != "." && dir != "" {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return err
 		}
 	}
@@ -122,5 +122,8 @@ func Write(path string, r domain.ScanResult, now time.Time) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(b, '\n'), 0o644)
+	// Owner-only. The contents are anonymized, but this sits next to a report
+	// that is not, and defaulting a security tool's output to world-readable
+	// is the wrong habit to establish.
+	return os.WriteFile(path, append(b, '\n'), 0o600)
 }

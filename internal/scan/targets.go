@@ -57,7 +57,9 @@ func expandOne(item string, allowLarge bool) ([]string, error) {
 		return nil, fmt.Errorf("%s would expand to more than %d hosts; scan it in smaller blocks", item, maxExpandedHosts)
 	}
 
-	total := 1 << uint(hostBits)
+	// hostBits is non-negative (Masked guarantees Bits <= BitLen) and capped
+	// at 18 just above, so this shift cannot overflow.
+	total := 1 << hostBits
 	skipEnds := !p.Addr().Is6() && hostBits >= 2
 
 	out := make([]string, 0, total)

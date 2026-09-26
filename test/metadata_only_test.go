@@ -141,7 +141,7 @@ func payloadServer(t *testing.T) (host string, port int) {
 			sentinels["model weights"], sentinels["object key"])
 		// Follow with a large body so a naive implementation that buffers
 		// "just a bit more" is caught too.
-		io.WriteString(w, strings.Repeat(sentinels["inference output"], 4096))
+		_, _ = io.WriteString(w, strings.Repeat(sentinels["inference output"], 4096))
 	}))
 	t.Cleanup(srv.Close)
 	h, p, err := net.SplitHostPort(srv.Listener.Addr().String())
