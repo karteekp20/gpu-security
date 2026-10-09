@@ -92,7 +92,7 @@ the vantage note below.
 | Start | |
 | End | |
 | Timezone | |
-| Expected duration | minutes, not hours — a /24 completes in well under a minute |
+| Expected duration | minutes, not hours — a /24 is ~30s at default settings (bounded by ~8 x the 4s probe timeout) |
 
 ### 4. What the tool does
 

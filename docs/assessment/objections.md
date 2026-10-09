@@ -55,8 +55,12 @@ Fair question, and the honest answer has a caveat in it.
 - One TCP connect and at most one HTTP GET per service check, to documented
   health endpoints. No request body, no method other than GET, no retries
   against a host that responded.
-- Bounded concurrency and short timeouts. A /24 finishes in well under a
-  minute.
+- Bounded concurrency and short timeouts: 32 hosts at a time, and every port
+  on a host dialled once, concurrently. A /24 of hosts that do not answer is
+  bounded by about eight times the probe timeout — roughly 30 seconds at the
+  4-second default. Hosts that answer finish sooner. The slow case is a host
+  that accepts a connection and then goes silent; even a /24 of those is
+  minutes, not hours.
 - Probe paths are on a reviewed allowlist enforced in CI. A path with a query
   string, a traversal, or an execution endpoint fails the build.
 - It executes nothing, deploys nothing, and needs no credentials.
@@ -86,7 +90,10 @@ are never read, because object keys are your data.
 > output — including our in-memory structures. We've also deliberately broken
 > it to confirm the test actually fails."
 
-Offer to show them: `make test-p3`, and the code is public.
+Offer to show them: `make test-p3`, and the code is public. The four leaks we
+planted to confirm the suite actually fails are written up at the top of
+`test/metadata_only_test.go` — show that file if they want the negative
+control, not just the green run.
 
 ## "Our margins are thin. We can't spend more on security."
 

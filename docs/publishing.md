@@ -95,9 +95,19 @@ human:
       ```bash
       git log --all --name-only --pretty=format: | sort -u | grep -iE 'report|snapshot|\.json$'
       ```
-- [ ] Read the README and `docs/assessment/objections.md` once as a skeptic.
-      Publishing is when the do-not-claim list starts being tested by people
-      who did not write it.
+- [x] Read the README and `docs/assessment/objections.md` once as a skeptic.
+      Done 2026-10-10. Every checkable claim in the README was traced to the
+      code — flags, exit codes, rule IDs and severities, `GET`-only with a nil
+      body, the single-use salt, no `require` block, every `make` target. The
+      demo was run end to end and matches `demo.md` exactly: grade **F**, 8
+      hosts with findings, `RG-RAY-001` first, five items under "Fix these
+      first". Three things did not survive the read and are fixed (§18 rev 9):
+      the report footer cited `CLAUDE.md §10.0` at a buyer; two documents
+      promised a /24 in "well under a minute" where the real bound is ~8 waves
+      × the probe timeout; and `objections.md` claimed we had broken the P3
+      suite on purpose with nothing in the repo to show — the four mutations
+      are now written up at the top of `test/metadata_only_test.go` and each
+      was re-confirmed to turn the suite red.
 
 ## Making it public
 

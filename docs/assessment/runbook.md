@@ -60,7 +60,8 @@ For a tenant-side engagement, add `-buckets` if object storage is in scope.
 
 **3. Check coverage before you read findings.** The report says how many
 targets responded. If some did not, that is in an orange "coverage gap" box
-naming each one — read it out rather than skipping past it:
+naming them — the first ten, then a count of the rest, so a wide CIDR does not
+bury the report. Read it out rather than skipping past it:
 
 > "Three of the twelve didn't answer, so this grade only covers nine. Are
 > those hosts down, firewalled from where I'm sitting, or did I get the

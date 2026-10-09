@@ -17,6 +17,32 @@
 // When you add a field to a collector, parser, or output type, add a case
 // here. If you cannot tell whether a value is metadata or payload, it is
 // payload.
+//
+// # Negative control
+//
+// A guard suite nobody has seen fail is a suite nobody should believe, so the
+// four leaks below were planted in a scratch tree and the suite was confirmed
+// to reject each one. Re-run them after changing a probe or a boundary type;
+// each is a one-line edit, and each must turn this package red.
+//
+// Verified 2026-10-10 against 58c2a7d:
+//
+//  1. Copy a response header into Observation.Note in httpProbe
+//     ("server banner: " + resp.Header.Get("Server")).
+//     -> P3 VIOLATION: observations contains response header.
+//  2. Buffer the response body into Observation.Note instead of discarding
+//     it to io.Discard in httpProbe.
+//     -> P3 VIOLATION: prompt text, inference output, model weights, object key.
+//  3. Keep the bucket listing body in ProbeBucket and put it in the note
+//     ("enrich the finding with an object count").
+//     -> P3 VIOLATION: a bucket object key reached the finding.
+//  4. Add a ResponseBody string field to domain.Observation.
+//     -> rejected structurally, before any probe runs.
+//
+// Leaks 1-3 are the realistic ones: each is a plausible attempt to make a
+// finding more informative, which is how this guarantee would actually be
+// lost. Leak 1 matters most - it carries no obvious customer content, so only
+// an automated gate would catch it in review.
 package test
 
 import (

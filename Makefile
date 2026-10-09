@@ -69,7 +69,8 @@ demo-up:
 	@echo "Demo cluster up on $(DEMO_SUBNET). Run 'make demo' to scan it."
 	@echo "Tear down with 'make demo-down' when you are finished."
 
-## demo: scan the demo cluster and write the report. ~8 seconds.
+## demo: scan the demo cluster and write the report. ~16s (a /24 at -timeout 2s
+## is bounded by 8 waves of 32 hosts; measured 16.3s).
 demo: build
 	@./bin/$(BINARY) -cidr $(DEMO_SUBNET) -timeout 2s -out ./report || true
 	@echo
