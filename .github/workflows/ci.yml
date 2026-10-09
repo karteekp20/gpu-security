@@ -8,6 +8,12 @@ on:
 permissions:
   contents: read
 
+# Third-party actions are pinned to a commit SHA, not a tag. A tag is mutable:
+# whoever controls the action repository can repoint `v4` at new code, which
+# would run inside a job that builds and signs the binaries people point at
+# their GPU clusters. docs/threat-model.md T6 claims pinned actions; this is
+# the claim being true. The trailing comment is the human-readable version and
+# is what Dependabot rewrites on an update.
 env:
   GO_VERSION: "1.27"
 
@@ -15,9 +21,9 @@ jobs:
   build-and-test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: ${{ env.GO_VERSION }}
           check-latest: true
@@ -51,7 +57,7 @@ jobs:
           go tool cover -func=coverage.out | tail -1
 
       - name: Upload coverage profile
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage
           path: coverage.out
@@ -59,32 +65,39 @@ jobs:
   golangci-lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: ${{ env.GO_VERSION }}
-      - uses: golangci/golangci-lint-action@v6
+      # The action major must match the golangci-lint major: v7+ of the action
+      # drives golangci-lint v2, and our .golangci.yml is a v2 config. The
+      # action was on v6, which speaks v1 only - so this job could not have
+      # enforced the config it was pointed at.
+      #
+      # The linter version is pinned rather than `latest` for the same reason:
+      # a future golangci-lint v3 would silently turn the lint gate off again.
+      - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
-          version: latest
+          version: v2.14
 
   # We are a security product and therefore a high-value target (CLAUDE.md P8).
   # Scan our own dependencies and code on every change.
   supply-chain:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: ${{ env.GO_VERSION }}
 
       - name: Vulnerability scan
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
+          go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
           govulncheck ./...
 
       - name: Generate SBOM
-        uses: anchore/sbom-action@v0
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
         with:
           format: cyclonedx-json
           output-file: sbom.cyclonedx.json

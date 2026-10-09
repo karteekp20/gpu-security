@@ -5,7 +5,7 @@
 > those land (Phase 1), this document must be extended in the same PR that
 > adds them (CLAUDE.md §12, §17).
 >
-> **Status:** current as of the Phase-0 scanner. **Last updated:** 2026-09-25.
+> **Status:** current as of the Phase-0 scanner. **Last updated:** 2026-10-10.
 
 ## Why this document exists
 
@@ -179,11 +179,24 @@ snapshot — not to the report they read themselves.
 - A CycloneDX SBOM and SHA-256 checksums accompany every release.
 - `govulncheck` and `golangci-lint` (including `gosec`) gate every PR.
 - Static, `CGO_ENABLED=0` builds — no dynamic linking surface.
+- **No third-party Go dependencies at all.** `go.mod` has no `require` block;
+  everything is the standard library. There is no transitive dependency tree
+  to compromise, which is the strongest available answer to this threat and
+  the reason it is worth keeping true.
+- **Every third-party action is pinned to a commit SHA**, not a tag. A tag is
+  mutable, and these actions run in the job that builds and signs the release,
+  so a repointed tag is a direct path to a trojaned binary. Dependabot keeps
+  the pins current so pinning does not decay into staleness.
+- The release workflow's write permissions are scoped per job (`contents:
+  write` and `id-token: write` only on release; `contents: read` elsewhere).
 - The same cosign mechanism is reserved for the Phase-1 air-gap update
   manifest (CLAUDE.md §13), so there will never be a second signing path.
 
-**Residual risk.** Compromise of the GitHub Actions environment or a Go module
-dependency. Partially mitigated by pinned actions and SBOM review.
+**Residual risk.** Compromise of the GitHub Actions environment itself, or of
+an action at a SHA we have already pinned. SBOM review and the absence of any
+Go dependency tree narrow this, but a build running on someone else's compute
+cannot be fully attested from inside itself. Reproducible builds would be the
+next real mitigation; they are not yet in place.
 
 ### T7 — Misuse: scanning without authorization
 

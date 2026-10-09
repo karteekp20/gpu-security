@@ -4,9 +4,12 @@ on:
   push:
     tags: ["v*"]
 
+# Read-only by default; the one job that needs to write does the asking. The
+# elevated token here can create a release and mint an OIDC identity that
+# signs binaries in our name, so it is scoped to the job rather than handed to
+# the whole workflow (docs/threat-model.md T6).
 permissions:
-  contents: write
-  id-token: write # keyless cosign signing via OIDC
+  contents: read
 
 env:
   GO_VERSION: "1.27"
@@ -14,12 +17,15 @@ env:
 jobs:
   release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the release and upload artifacts
+      id-token: write # keyless cosign signing via OIDC
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0 # git describe needs history for the version stamp
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: ${{ env.GO_VERSION }}
           check-latest: true
@@ -35,13 +41,13 @@ jobs:
       # SBOM on every build is non-negotiable for a security product
       # (CLAUDE.md P8, 12). Buyers in regulated environments ask for it.
       - name: Generate SBOM
-        uses: anchore/sbom-action@v0
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
         with:
           format: cyclonedx-json
           output-file: bin/sbom.cyclonedx.json
 
       - name: Install cosign
-        uses: sigstore/cosign-installer@v3
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
 
       # Keyless signing against the Sigstore transparency log. This is
       # deliberately the SAME mechanism the air-gap update manifest will use
@@ -56,8 +62,26 @@ jobs:
               "$f"
           done
 
+      # Verify what we just signed, before anyone is told it is verifiable.
+      # The release body instructs people to run exactly this; a signing step
+      # that silently produced an unverifiable signature would otherwise be
+      # discovered by the first person who took that instruction seriously.
+      - name: Verify the signatures we just made
+        run: |
+          cd bin
+          for f in ray-guard-* SHA256SUMS sbom.cyclonedx.json; do
+            case "$f" in *.sig|*.pem) continue ;; esac
+            cosign verify-blob \
+              --certificate "$f.pem" \
+              --signature "$f.sig" \
+              --certificate-identity-regexp '^https://github.com/${{ github.repository }}/' \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+              "$f"
+          done
+          sha256sum -c SHA256SUMS
+
       - name: Publish release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           files: |
             bin/ray-guard-*
@@ -74,7 +98,7 @@ jobs:
             cosign verify-blob \
               --certificate ray-guard-linux-amd64.pem \
               --signature  ray-guard-linux-amd64.sig \
-              --certificate-identity-regexp '^https://github.com/karteekp20/gpu-security/' \
+              --certificate-identity-regexp '^https://github.com/${{ github.repository }}/' \
               --certificate-oidc-issuer https://token.actions.githubusercontent.com \
               ray-guard-linux-amd64
             ```

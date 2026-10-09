@@ -1,0 +1,24 @@
+version: 2
+
+# Pinning actions to a commit SHA (see .github/workflows/ci.yml) trades a
+# mutable-tag risk for a staleness risk: a pin never picks up the upstream
+# security fix. This closes that loop, so the pins stay pins rather than
+# becoming rot.
+#
+# Only the github-actions ecosystem is listed. ray-guard's go.mod has no
+# `require` block at all - zero third-party dependencies is the point (P4,
+# CLAUDE.md §15) - so there is nothing for a gomod updater to do yet. Add it
+# in the PR that introduces the first dependency, not before.
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(ci)"
+    groups:
+      # One PR a week rather than six. These all land in the same three files
+      # and are reviewed the same way.
+      actions:
+        patterns: ["*"]
