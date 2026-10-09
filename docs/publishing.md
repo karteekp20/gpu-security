@@ -22,6 +22,9 @@ moves; otherwise this is the record.
 | LICENSE holder | — | MIT, "Copyright (c) 2026 Karteek" |
 | `.gitignore` | — | covers `bin/`, `report/`, `report-*/`, `snapshot*.json`, `/ray-guard` |
 | Threat model read as an outsider | `docs/threat-model.md` | T6 corrected — see below |
+| Action pins match their comments | GitHub tag API, all 7 pins | OK — every SHA is the commit its `# vX.Y.Z` comment names |
+| Threat-model claims traced to code | T1–T7 | T4 corrected (the coverage list is capped at 10, not "every target"); the rest hold — path allowlist, CIDR hard ceiling `1<<18`, `html/template`, no-redirect, `gosec` enabled, `pull_request` trigger |
+| Release instructions are runnable | `.github/workflows/release.yml` vs `SECURITY.md` | `.sig`/`.pem` names, upload globs, `cd bin && sha256sum -c` paths and `VERSION=` override all line up |
 
 **What that outsider read changed.** T6 claimed "pinned actions". The workflows
 used mutable major tags (`@v4`, `@v0`) on the actions that build and sign the

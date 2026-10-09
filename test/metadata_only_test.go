@@ -38,17 +38,22 @@
 //     -> P3 VIOLATION: a bucket object key reached the finding.
 //  4. Add a ResponseBody string field to domain.Observation.
 //     -> rejected structurally, before any probe runs.
+//  5. Import net/http into internal/benchmark.
+//     -> rejected by the egress guard, before any probe runs.
 //
 // Leaks 1-3 are the realistic ones: each is a plausible attempt to make a
 // finding more informative, which is how this guarantee would actually be
 // lost. Leak 1 matters most - it carries no obvious customer content, so only
-// an automated gate would catch it in review.
+// an automated gate would catch it in review. Leak 5 is the other shape the
+// promise could fail in: not payload crossing the boundary, but the binary
+// gaining a way to send anything at all.
 package test
 
 import (
 	"bytes"
 	"context"
 	"fmt"
+	"go/build"
 	"io"
 	"net"
 	"net/http"
@@ -354,4 +359,58 @@ func mustRead(t *testing.T, path string) []byte {
 		t.Fatalf("reading %s: %v", path, err)
 	}
 	return b
+}
+
+// -----------------------------------------------------------------------------
+// 3. Egress guard
+// -----------------------------------------------------------------------------
+
+// networkCapablePackage is the one package allowed to touch the network.
+// Probing is its whole job; everywhere else, an import of net or os/exec is
+// how "no egress" would quietly stop being true.
+const networkCapablePackage = "internal/scan"
+
+// nonProbingPackages are the packages that must stay incapable of network I/O
+// and of shelling out. README, SECURITY.md and threat-model.md all tell a CISO
+// that ray-guard cannot phone home because there is no such code path — not
+// because a flag defaults to off. That sentence is about every future version
+// of this binary, so it is enforced here rather than remembered.
+//
+// internal/benchmark matters most: it is the one package whose output is
+// *designed* to be shared with us (P9), which makes "write a local file" and
+// "POST it somewhere" a one-line difference. The decision that it stays a
+// local file is in docs/decision-log.md; this is that decision holding.
+var nonProbingPackages = []string{
+	"cmd/ray-guard",
+	"internal/domain",
+	"internal/report",
+	"internal/benchmark",
+}
+
+// TestOnlyTheProbeMayReachTheNetwork fails if any package other than the
+// prober gains the ability to open a socket or run a command.
+func TestOnlyTheProbeMayReachTheNetwork(t *testing.T) {
+	// net/netip is address parsing with no I/O; it is deliberately allowed.
+	const allowed = "net/netip"
+	forbidden := func(imp string) bool {
+		if imp == allowed {
+			return false
+		}
+		return imp == "net" || strings.HasPrefix(imp, "net/") ||
+			imp == "os/exec" || imp == "syscall"
+	}
+
+	for _, rel := range nonProbingPackages {
+		pkg, err := build.ImportDir(filepath.Join("..", rel), 0)
+		if err != nil {
+			t.Fatalf("%s: %v", rel, err)
+		}
+		for _, imp := range pkg.Imports {
+			if forbidden(imp) {
+				t.Errorf("%s imports %q. Only %s may reach the network; "+
+					"ray-guard's no-egress guarantee is a design constraint, not a default",
+					rel, imp, networkCapablePackage)
+			}
+		}
+	}
 }

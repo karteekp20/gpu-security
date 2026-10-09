@@ -5,7 +5,7 @@ this project, and Section 2 ("Non-Negotiable Principles") is binding on every
 change — human or agent. A PR that conflicts with a principle gets closed, not
 debated.
 
-## The three that will get a PR rejected fastest
+## The four that will get a PR rejected fastest
 
 **P3 — metadata only.** The scanner never reads, stores, logs, or transmits
 customer payload: model weights, prompts, training data, inference content,
@@ -17,6 +17,12 @@ Enforced by `make test-p3`.
 body, and hit documented health/info endpoints. We confirm an unauthenticated
 Ray dashboard by getting a 200 — not by submitting a job. Enforced by
 `TestDefaultProbePathsAreBenign` and `TestProbesAreBenignAndReadOnly`.
+
+**P4 — no egress.** Only `internal/scan` may import `net`, `net/http`,
+`os/exec`, or `syscall`. The no-egress promise in the README and the threat
+model is a design constraint, not a default, and `internal/benchmark` — whose
+output is the one thing meant to be shared with us — stays a local file.
+Enforced by `TestOnlyTheProbeMayReachTheNetwork`.
 
 **P1 — stay in phase.** This repo is in Phase 0. There is no control plane, no
 database, no Rego rule library, no credential, and no web console, and none of

@@ -24,7 +24,8 @@ contents are read, stored, or transmitted. This is enforced by a build-blocking 
 (`make test-p3`), not by policy. See `docs/threat-model.md`.
 
 **No egress.** ray-guard talks only to the targets you name. It does not phone home, check for
-updates, or submit telemetry — there is no such code path.
+updates, or submit telemetry — there is no such code path, and `make test-p3` fails the build if
+any package other than the prober gains one.
 
 Single static binary, no external dependencies (`go.mod` has no `require` block).
 

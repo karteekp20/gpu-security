@@ -27,6 +27,14 @@ phone home, check for updates, submit telemetry, or contact any of our
 infrastructure. This is a design constraint, not a configuration default
 (P4) — there is no code path to disable, because there is no such code path.
 
+That last sentence is a claim about every future version of the binary, so it
+is enforced rather than remembered: `TestOnlyTheProbeMayReachTheNetwork`
+(`test/metadata_only_test.go`) fails the build if any package other than
+`internal/scan` imports `net`, `net/http`, `os/exec`, or `syscall`. It applies
+most pointedly to `internal/benchmark`, whose output is the one artifact
+*designed* to be shared with us (P9) — "write a local file" and "POST it
+somewhere" are a one-line difference, and this is the line.
+
 ## Trust boundaries
 
 ```
@@ -78,9 +86,13 @@ response body; the scanner stores it in a finding, a report, or a snapshot.*
   headers, then asserts none of it appears in any output or in the in-memory
   structures.
 
-**Verified:** both guards were confirmed to fail when a payload field or a
-body-retaining probe was deliberately introduced. A guard that has never been
-seen to fail is not a guard.
+**Verified:** four leaks were planted and each one was confirmed to turn the
+suite red — a response header copied into a finding note, a buffered response
+body, a parsed bucket listing, and a payload-shaped field on the boundary
+type. They are written up at the top of `test/metadata_only_test.go` so the
+check is reproducible rather than remembered; re-run them after changing a
+probe or a boundary type. A guard that has never been seen to fail is not a
+guard.
 
 **Residual risk.** A future contributor could route data around the boundary
 types. Mitigated by `make test-p3` in CI and the rule in CONTRIBUTING.md.
@@ -143,8 +155,10 @@ pipeline scans a moved target would pass green indefinitely.
   masquerade as a clean one.
 - A scan where nothing responded grades `N/A — INCONCLUSIVE`, scores 0, says
   "this is not a clean result" in the report, and exits **7** so CI fails.
-- Partial coverage is disclosed in the report: a named list of every target
-  that was not assessed, shown above the findings.
+- Partial coverage is disclosed in the report, above the findings: the
+  unassessed targets are named individually up to the first ten, then counted
+  (`report.json` carries them all). The cap exists so a dark /24 cannot bury
+  the report it is supposed to qualify.
 
 **Residual risk.** A firewalled-but-healthy host is indistinguishable from an
 absent one. We report the ambiguity rather than resolving it, which is the
@@ -186,7 +200,16 @@ snapshot — not to the report they read themselves.
 - **Every third-party action is pinned to a commit SHA**, not a tag. A tag is
   mutable, and these actions run in the job that builds and signs the release,
   so a repointed tag is a direct path to a trojaned binary. Dependabot keeps
-  the pins current so pinning does not decay into staleness.
+  the pins current so pinning does not decay into staleness. All seven pins
+  were checked against the upstream tags on 2026-10-10 — the SHA that runs is
+  the commit the `# vX.Y.Z` comment names, in every case. The comment is for
+  humans, so it is worth knowing it is not lying:
+
+  ```bash
+  # for each "uses: owner/repo@<sha> # vX.Y.Z" in .github/workflows/
+  gh api repos/<owner>/<repo>/git/ref/tags/<vX.Y.Z> --jq .object.sha
+  # (annotated tags need one more hop: git/tags/<that sha> --jq .object.sha)
+  ```
 - The release workflow's write permissions are scoped per job (`contents:
   write` and `id-token: write` only on release; `contents: read` elsewhere).
 - The same cosign mechanism is reserved for the Phase-1 air-gap update
