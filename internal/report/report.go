@@ -1,3 +1,10 @@
+// Package report renders a scan into the two artifacts an operator actually
+// uses: machine-readable JSON, and a self-contained HTML page written to be
+// read by a security lead who has 60 seconds.
+//
+// The HTML embeds its own styles and references no external asset, so it opens
+// on an air-gapped workstation and mails as a single file. Output is
+// golden-file tested because that diff is the artifact a buyer reads.
 package report
 
 import (
@@ -97,11 +104,7 @@ func newView(r domain.ScanResult) view {
 	}
 }
 
-// Write emits the machine-readable JSON and the standalone HTML report.
-// Both are self-contained: the HTML embeds its own styles and references no
-// external asset, so it can be opened on an air-gapped workstation or mailed
-// to a security lead as a single file.
-// reportPerm is owner-only. A report lists exactly which of a client's
+// Scan output is owner-only. A report lists exactly which of a client's
 // services are exposed and unauthenticated - it is a map for anyone who wants
 // in. World-readable is the wrong default for that on any shared machine; the
 // operator can widen it deliberately if they want to share.
@@ -110,6 +113,8 @@ const (
 	reportDir  = 0o700
 )
 
+// Write emits the machine-readable JSON and the standalone HTML report into
+// outDir, creating it if needed. Both files are written owner-only.
 func Write(outDir string, r domain.ScanResult) error {
 	if err := os.MkdirAll(outDir, reportDir); err != nil {
 		return err
@@ -117,13 +122,21 @@ func Write(outDir string, r domain.ScanResult) error {
 	if err := os.WriteFile(filepath.Join(outDir, "report.json"), MarshalJSON(r), reportPerm); err != nil {
 		return err
 	}
+	// #nosec G304 -- outDir is the -out path the operator chose on their own
+	// machine; writing where they asked is the feature.
 	f, err := os.OpenFile(filepath.Join(outDir, "report.html"),
 		os.O_WRONLY|os.O_CREATE|os.O_TRUNC, reportPerm)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-	return RenderHTML(f, r)
+	if err := RenderHTML(f, r); err != nil {
+		_ = f.Close()
+		return err
+	}
+	// Close, not defer Close: it surfaces write errors that the Write calls
+	// themselves can miss. The report is the deliverable, so a truncated one
+	// must not be reported as success.
+	return f.Close()
 }
 
 // MarshalJSON renders the machine-readable report.

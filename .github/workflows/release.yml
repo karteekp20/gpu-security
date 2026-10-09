@@ -9,7 +9,7 @@ permissions:
   id-token: write # keyless cosign signing via OIDC
 
 env:
-  GO_VERSION: "1.22"
+  GO_VERSION: "1.27"
 
 jobs:
   release:

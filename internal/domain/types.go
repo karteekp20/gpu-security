@@ -1,3 +1,11 @@
+// Package domain holds the types shared across the scanner: what was observed,
+// what was concluded, and how the whole scan is scored.
+//
+// It imports nothing of ours and contains no I/O, which is what lets the
+// Phase-1 collector reuse these types without dragging the scanner along.
+// Every type here crosses the collection boundary, so none of them may grow a
+// field capable of carrying customer payload - see test/metadata_only_test.go,
+// which enforces that.
 package domain
 
 import (

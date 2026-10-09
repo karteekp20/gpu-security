@@ -1,3 +1,15 @@
+// Package scan probes targets and decides what is wrong with them.
+//
+// The two halves are deliberately separate. probe.go observes what is true -
+// this port is open, this service answered 200, this certificate is
+// self-signed - and detect.go decides what is bad. That split keeps detection
+// unit-testable without a network, lets severities be re-tuned after buyer
+// feedback without touching probing, and marks the seam where the Phase-1
+// OPA/Rego rule library will replace detect.go.
+//
+// Probes are read-only and benign: one GET per check, no request body, to
+// documented health endpoints only. We confirm exposure by observation, never
+// by exploitation.
 package scan
 
 import (
@@ -353,7 +365,7 @@ func (s *Scanner) tlsProbe(ctx context.Context, host string, port int) domain.TL
 	if err != nil {
 		return domain.TLSState{Enabled: false}
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	certs := conn.ConnectionState().PeerCertificates
 	if len(certs) == 0 {
 		return domain.TLSState{Enabled: true}

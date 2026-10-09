@@ -159,6 +159,8 @@ func loadTargets(arg, file, cidr string, allowLarge bool) ([]string, error) {
 	out = append(out, splitList(arg)...)
 
 	if file != "" {
+		// #nosec G304 -- this is the -targets-file the operator passed; reading
+		// the path they named is the feature.
 		b, err := os.ReadFile(file)
 		if err != nil {
 			return nil, err

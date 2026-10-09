@@ -80,7 +80,7 @@ func assertNoPayloadFields(t *testing.T, rt reflect.Type, path string, seen map[
 	seen[rt] = true
 
 	switch rt.Kind() {
-	case reflect.Ptr, reflect.Slice, reflect.Array:
+	case reflect.Pointer, reflect.Slice, reflect.Array:
 		if rt.Kind() == reflect.Slice && rt.Elem().Kind() == reflect.Uint8 {
 			t.Errorf("%s is a []byte: raw bytes are how payload enters a system", path)
 			return

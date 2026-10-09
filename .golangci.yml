@@ -1,29 +1,53 @@
+version: "2"
+
 run:
   timeout: 5m
 
 linters:
+  # errcheck, govet, ineffassign, staticcheck and unused are enabled by
+  # default in v2; these are the additions.
   enable:
-    - errcheck
-    - govet
-    - ineffassign
-    - staticcheck
-    - unused
-    - gosec       # we are a security product; hold our own code to it (P8)
+    - gosec # we are a security product; hold our own code to it (P8)
     - misspell
     - unconvert
-    - bodyclose   # a leaked response body is both a bug and a P3 smell
+    - bodyclose # a leaked response body is both a bug and a P3 smell
 
-linters-settings:
-  gosec:
-    excludes:
-      # G402: the scanner deliberately completes handshakes against
-      # untrusted certificates in order to REPORT that they are untrusted.
-      # Verification is then performed explicitly in tls.Probe (see
-      # internal/scan/probe.go). This is the product feature, not a lapse.
-      - G402
+  settings:
+    errcheck:
+      # Formatted writes to the terminal summary. A failed write to stdout is
+      # not actionable and not worth a branch on every line; real I/O paths
+      # (report and snapshot files) are checked.
+      exclude-functions:
+        - fmt.Fprintf
+        - fmt.Fprintln
 
-issues:
-  exclude-rules:
-    - path: _test\.go
-      linters:
-        - gosec
+    staticcheck:
+      # QF1001 wants De Morgan's law applied to the network/broadcast skip in
+      # ExpandCIDR. The current form reads as "unless we are skipping ends and
+      # this is an end", which is the intent; the inverted form is not clearer.
+      checks: ["all", "-QF1001"]
+
+    gosec:
+      excludes:
+        # G402: the scanner deliberately completes handshakes against
+        # untrusted certificates in order to REPORT that they are untrusted.
+        # Verification is then performed explicitly in Scanner.tlsProbe (see
+        # internal/scan/probe.go). This is the product feature, not a lapse.
+        - G402
+
+  exclusions:
+    generated: lax
+    # Deliberately NOT using the default exclusion presets. They suppress
+    # whole classes of finding - std-error-handling in particular - which is
+    # the wrong trade for a security tool. We would rather see the noise and
+    # silence individual cases with a stated reason.
+    presets: []
+    rules:
+      # Test fixtures deliberately misconfigure the scanner's own test
+      # servers. gosec on production code is what matters.
+      - path: _test\.go
+        linters: [gosec]
+
+formatters:
+  exclusions:
+    generated: lax

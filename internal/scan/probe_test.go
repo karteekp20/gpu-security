@@ -101,7 +101,7 @@ func TestProbeClosedPortYieldsNoObservation(t *testing.T) {
 	}
 	_, portStr, _ := net.SplitHostPort(l.Addr().String())
 	port, _ := strconv.Atoi(portStr)
-	l.Close()
+	_ = l.Close()
 
 	obs := probeOne(t, "127.0.0.1", []Check{{"ray-dashboard", port, "http", "/"}})
 	if len(obs) != 0 {
@@ -114,14 +114,14 @@ func TestProbeTCPOnlyCheck(t *testing.T) {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	defer l.Close()
+	defer func() { _ = l.Close() }()
 	go func() {
 		for {
 			c, err := l.Accept()
 			if err != nil {
 				return
 			}
-			c.Close()
+			_ = c.Close()
 		}
 	}()
 	_, portStr, _ := net.SplitHostPort(l.Addr().String())
@@ -180,7 +180,7 @@ func TestTLSProbeGivesUpQuicklyOnAcceptAndHang(t *testing.T) {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	defer l.Close()
+	defer func() { _ = l.Close() }()
 	done := make(chan struct{})
 	defer close(done)
 	go func() {
@@ -190,7 +190,7 @@ func TestTLSProbeGivesUpQuicklyOnAcceptAndHang(t *testing.T) {
 				return
 			}
 			// Hold the connection open, say nothing - the pathological case.
-			go func() { <-done; c.Close() }()
+			go func() { <-done; _ = c.Close() }()
 		}
 	}()
 	_, portStr, _ := net.SplitHostPort(l.Addr().String())
@@ -348,7 +348,7 @@ func TestRefusingHostCountsAsResponded(t *testing.T) {
 	}
 	_, portStr, _ := net.SplitHostPort(l.Addr().String())
 	port, _ := strconv.Atoi(portStr)
-	l.Close() // nothing listening now, so connects are refused
+	_ = l.Close() // nothing listening now, so connects are refused
 
 	s := NewWithChecks(2*time.Second, []Check{{"ray-dashboard", port, "http", "/"}})
 	got := s.ProbeHost(context.Background(), "127.0.0.1")
@@ -408,7 +408,7 @@ func TestPortStateDistinguishesClosedFromFiltered(t *testing.T) {
 	l, _ := net.Listen("tcp", "127.0.0.1:0")
 	_, portStr, _ := net.SplitHostPort(l.Addr().String())
 	port, _ := strconv.Atoi(portStr)
-	l.Close()
+	_ = l.Close()
 
 	if got := s.portState(context.Background(), "127.0.0.1", port); got != domain.PortClosed {
 		t.Errorf("loopback with nothing listening should be closed, got %s", got)
