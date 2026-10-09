@@ -112,6 +112,12 @@ triggers an incident on a cluster running a multi-week training job.*
   `exec`, `submit`, `job`, or `run` fail the build.
 - CIDR expansion refuses blocks wider than /16 without an explicit flag, and a
   hard ceiling the flag cannot lift.
+- The two parsers that turn operator input into a target list (`-cidr`,
+  `-ports`) are fuzzed nightly. The properties they hold are the ones that
+  keep a scan inside its authorization: every expanded target parses as an
+  address, the host ceiling is never exceeded, and no `-ports` string can
+  introduce a probe path the allowlist never reviewed. A parser bug here does
+  not crash the tool so much as point it somewhere nobody agreed to.
 - A fixed, identifying User-Agent (`ray-guard/<version> (+benign posture
   probe)`) so a defender who sees the traffic can attribute it immediately.
 

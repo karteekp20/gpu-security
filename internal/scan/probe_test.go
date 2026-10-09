@@ -420,3 +420,55 @@ func TestPortStateDistinguishesClosedFromFiltered(t *testing.T) {
 		t.Logf("TEST-NET-2 returned %s (network-dependent; not asserted)", got)
 	}
 }
+
+// FuzzApplyPortOverrides fuzzes the one flag whose value is parsed into the
+// probe table itself. TestDefaultProbePathsAreBenign guards the built-in
+// checks, but -ports rewrites that table at runtime, so the property that
+// matters here is that no operator-supplied string can introduce a path the
+// allowlist never reviewed. A scanner that can be pointed at an arbitrary
+// path by flag is an exploit tool with a different name.
+func FuzzApplyPortOverrides(f *testing.F) {
+	for _, seed := range []string{
+		"", "vllm=8100", "9000", "vllm=8100,9000", "ray-dashboard=1",
+		"triton=0", "triton=65536", "triton=-1", "nosuchservice=8000",
+		"=8000", "vllm=", "vllm=8100,", ",,", " vllm = 8100 ",
+		"vllm=8100=8200", "jupyter=8888;exec", "ollama=11434?x=1",
+	} {
+		f.Add(seed)
+	}
+
+	base := DefaultChecks()
+	allowedPaths := map[string]bool{"/": true}
+	for _, c := range base {
+		allowedPaths[c.Path] = true
+	}
+	knownServices := map[string]bool{ServiceUnknown: true}
+	for _, c := range base {
+		knownServices[c.Service] = true
+	}
+
+	f.Fuzz(func(t *testing.T, spec string) {
+		out, err := ApplyPortOverrides(DefaultChecks(), spec)
+		if err != nil {
+			return
+		}
+		if len(out) < len(base) {
+			t.Errorf("ApplyPortOverrides(%q) dropped checks: %d < %d", spec, len(out), len(base))
+		}
+		for _, c := range out {
+			if c.Port < 1 || c.Port > 65535 {
+				t.Errorf("ApplyPortOverrides(%q) produced port %d for %s", spec, c.Port, c.Service)
+			}
+			if !allowedPaths[c.Path] {
+				t.Errorf("ApplyPortOverrides(%q) introduced path %q, which the benign-path allowlist never reviewed",
+					spec, c.Path)
+			}
+			if !knownServices[c.Service] {
+				t.Errorf("ApplyPortOverrides(%q) introduced service %q", spec, c.Service)
+			}
+			if c.Scheme != "http" && c.Scheme != "tcp" {
+				t.Errorf("ApplyPortOverrides(%q) produced scheme %q", spec, c.Scheme)
+			}
+		}
+	})
+}

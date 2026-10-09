@@ -126,6 +126,7 @@ make lint             # gofmt + go vet + golangci-lint
 make test             # go test -race ./...
 make test-p3          # metadata-only enforcement suite (P3) — never skip
 make test-integration # detections against REAL Ray/Jupyter/MLflow/Ollama in Docker
+make fuzz             # fuzz the -cidr and -ports parsers (nightly in CI)
 make build-all        # cross-compile the release matrix + checksums
 ```
 

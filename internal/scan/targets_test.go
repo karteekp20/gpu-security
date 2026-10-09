@@ -1,6 +1,9 @@
 package scan
 
-import "testing"
+import (
+	"net/netip"
+	"testing"
+)
 
 func TestExpandCIDRSkipsNetworkAndBroadcast(t *testing.T) {
 	hosts, err := ExpandCIDR("192.0.2.0/30", false)
@@ -110,4 +113,39 @@ func TestApplyPortOverrideRejectsBadPort(t *testing.T) {
 			t.Errorf("expected an error for %q", spec)
 		}
 	}
+}
+
+// FuzzExpandCIDR looks for a -cidr value that panics or escapes the limits.
+// The function does arithmetic on prefix lengths and a left shift on host
+// bits, which is exactly the shape of code that is fine until it is not; and
+// its input comes from an operator's command line, often pasted.
+func FuzzExpandCIDR(f *testing.F) {
+	for _, seed := range []string{
+		"10.0.0.0/24", "10.0.0.0/31", "10.0.0.0/32", "0.0.0.0/0",
+		"192.168.1.0/23,10.0.0.0/30", "fd00::/120", "::/0",
+		"::ffff:10.0.0.0/120", "10.0.0.5", "10.0.0.0/33", "",
+		",,", " 10.0.0.0/30 ", "10.0.0.0/8",
+	} {
+		f.Add(seed, false)
+		f.Add(seed, true)
+	}
+
+	f.Fuzz(func(t *testing.T, spec string, allowLarge bool) {
+		hosts, err := ExpandCIDR(spec, allowLarge)
+		if err != nil {
+			if hosts != nil {
+				t.Errorf("ExpandCIDR(%q) returned %d hosts alongside an error", spec, len(hosts))
+			}
+			return
+		}
+		if len(hosts) > maxExpandedHosts {
+			t.Errorf("ExpandCIDR(%q) returned %d hosts, over the %d ceiling",
+				spec, len(hosts), maxExpandedHosts)
+		}
+		for _, h := range hosts {
+			if _, perr := netip.ParseAddr(h); perr != nil {
+				t.Errorf("ExpandCIDR(%q) returned %q, which is not an address", spec, h)
+			}
+		}
+	})
 }

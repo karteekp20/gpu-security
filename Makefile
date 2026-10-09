@@ -8,10 +8,11 @@ PLATFORMS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64
 # security lead who will run it once, in 60 seconds (CLAUDE.md P4, 15).
 GOFLAGS_STATIC := CGO_ENABLED=0
 
-.PHONY: build build-all test test-p3 test-integration demo demo-up demo-down lint fmt run report-pdf sbom airgap-bundle clean
+.PHONY: build build-all test test-p3 test-integration fuzz demo demo-up demo-down lint fmt run report-pdf sbom airgap-bundle clean
 
 # The demo subnet is pinned in test/integration/docker-compose.yml.
 DEMO_SUBNET := 172.31.77.0/24
+FUZZTIME ?= 60s
 
 build:
 	$(GOFLAGS_STATIC) go build -ldflags '$(LDFLAGS)' -o bin/$(BINARY) ./cmd/$(BINARY)
@@ -33,6 +34,13 @@ test:
 ## test-p3: the metadata-only enforcement suite (CLAUDE.md P3). Never skip.
 test-p3:
 	go test -race -v ./test/...
+
+## fuzz: fuzz the two parsers that read operator input (-cidr and -ports).
+## The seed corpora run as ordinary tests in `make test`; this is the search.
+## Runs nightly in CI. Override the budget with FUZZTIME=5m.
+fuzz:
+	go test ./internal/scan -run FuzzExpandCIDR -fuzz FuzzExpandCIDR -fuzztime $(FUZZTIME)
+	go test ./internal/scan -run FuzzApplyPortOverrides -fuzz FuzzApplyPortOverrides -fuzztime $(FUZZTIME)
 
 ## test-integration: run the detections against REAL services in docker.
 ## Unit tests only prove our logic agrees with our own mocks; this proves

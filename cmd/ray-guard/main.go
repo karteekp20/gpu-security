@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -63,6 +64,21 @@ func run() int {
 		checks, err = scan.ApplyPortOverrides(checks, *portsArg)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "error:", err)
+			return exitUsageError
+		}
+	}
+
+	// Check the output paths BEFORE touching the network. A scan that runs to
+	// completion and then cannot write its report has cost the operator a
+	// second pass over a customer's cluster to fix a typo - and the
+	// authorization they hold may well have been for one scan in one window.
+	if err := ensureWritable(*outDir); err != nil {
+		fmt.Fprintln(os.Stderr, "error: cannot write to -out directory:", err)
+		return exitUsageError
+	}
+	if *snapshotPath != "" {
+		if err := ensureWritable(filepath.Dir(*snapshotPath)); err != nil {
+			fmt.Fprintln(os.Stderr, "error: cannot write -benchmark-snapshot there:", err)
 			return exitUsageError
 		}
 	}
@@ -152,6 +168,25 @@ func probeAll(ctx context.Context, scanner *scan.Scanner, targets, buckets []str
 	wg.Wait()
 	sort.Slice(hosts, func(i, j int) bool { return hosts[i].Host < hosts[j].Host })
 	return observations, hosts
+}
+
+// ensureWritable creates dir if needed and confirms a file can actually be
+// created in it. Owner-only, matching the permissions the report is written
+// with: a report naming a client's exposed services is a map for anyone who
+// wants in.
+func ensureWritable(dir string) error {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	f, err := os.CreateTemp(dir, ".ray-guard-writecheck-*")
+	if err != nil {
+		return err
+	}
+	name := f.Name()
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Remove(name)
 }
 
 func loadTargets(arg, file, cidr string, allowLarge bool) ([]string, error) {

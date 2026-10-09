@@ -18,6 +18,7 @@ moves; otherwise this is the record.
 | P3 metadata-only | `make test-p3` | pass |
 | **Real services** | `make test-integration` | **pass, 21.3s** — real Ray grades F; Jupyter, MLflow, Ollama detected; vLLM/Triton/Slurm correctly announce themselves as fixtures |
 | Cross-compile matrix | `make build-all` | 4/4 platforms, `SHA256SUMS` written |
+| Fuzzing | `make fuzz FUZZTIME=45s` | ~1.25M execs per parser, no crashes; nightly in CI at 150s |
 | No placeholders | `git grep -nE '<YOUR NAME>\|TODO\|FIXME\|/tmp/claude-'` | clean |
 | LICENSE holder | — | MIT, "Copyright (c) 2026 Karteek" |
 | `.gitignore` | — | covers `bin/`, `report/`, `report-*/`, `snapshot*.json`, `/ray-guard` |
