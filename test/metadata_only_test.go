@@ -323,6 +323,8 @@ func TestDefaultProbePathsAreBenign(t *testing.T) {
 		"/api":             true,
 		"/api/tags":        true,
 		"/metrics":         true,
+		"/models":          true,
+		"/get_model_info":  true,
 		"/v1/models":       true,
 		"/v2/health/ready": true,
 	}

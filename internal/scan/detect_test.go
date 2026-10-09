@@ -122,3 +122,108 @@ func TestEveryRuleHasRemediation(t *testing.T) {
 }
 
 func contains(haystack, needle string) bool { return strings.Contains(haystack, needle) }
+
+// TestDetectNewOrchestratorRulesExposed covers the exposed case for each
+// detection added after the original set. Ports and health paths were taken
+// from the upstream documentation, not from memory - a check on the wrong
+// port is a silent miss, which reads as a clean result.
+func TestDetectNewOrchestratorRulesExposed(t *testing.T) {
+	cases := []struct {
+		service  string
+		port     int
+		wantRule string
+		wantSev  domain.Severity
+	}{
+		{"torchserve-mgmt", 8081, "RG-TORCHSERVE-001", domain.Critical},
+		{"torchserve-metrics", 8082, "RG-TORCHSERVE-002", domain.Low},
+		{"sglang", 30000, "RG-SGLANG-001", domain.High},
+		{"dcgm-exporter", 9400, "RG-DCGM-001", domain.Medium},
+	}
+	for _, c := range cases {
+		t.Run(c.service, func(t *testing.T) {
+			f := Detect([]domain.Observation{obs(c.service, c.port, 200, true)})
+			if len(f) != 1 {
+				t.Fatalf("expected exactly 1 finding, got %+v", f)
+			}
+			if f[0].RuleID != c.wantRule {
+				t.Errorf("rule = %s, want %s", f[0].RuleID, c.wantRule)
+			}
+			if f[0].Severity != c.wantSev {
+				t.Errorf("severity = %s, want %s", f[0].Severity, c.wantSev)
+			}
+			if f[0].Remediation == "" {
+				t.Error("no remediation: a finding without a fix is noise")
+			}
+		})
+	}
+}
+
+// TestDetectNewOrchestratorRulesConfiguredCorrectly is the other half of the
+// pair CONTRIBUTING.md requires: a rule that cannot tell an exposed service
+// from a protected one is worse than no rule.
+func TestDetectNewOrchestratorRulesConfiguredCorrectly(t *testing.T) {
+	for _, c := range []struct {
+		service string
+		port    int
+	}{
+		{"torchserve-mgmt", 8081},
+		{"torchserve-metrics", 8082},
+		{"sglang", 30000},
+		{"dcgm-exporter", 9400},
+	} {
+		t.Run(c.service, func(t *testing.T) {
+			// 401 behind TLS is the correctly-configured shape.
+			if f := Detect([]domain.Observation{obs(c.service, c.port, 401, false)}); len(f) != 0 {
+				t.Errorf("expected no findings for an authenticated service, got %+v", f)
+			}
+		})
+	}
+}
+
+// TestDetectTorchServeCarriesShellTorchCVE: the CVE is most of why the
+// management API is Critical rather than High, so it has to reach the report.
+func TestDetectTorchServeCarriesShellTorchCVE(t *testing.T) {
+	f := Detect([]domain.Observation{obs("torchserve-mgmt", 8081, 200, true)})
+	if len(f) != 1 {
+		t.Fatalf("expected 1 finding, got %+v", f)
+	}
+	found := false
+	for _, c := range f[0].CVEs {
+		if c == "CVE-2023-43654" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("CVEs = %v, want CVE-2023-43654 (ShellTorch)", f[0].CVEs)
+	}
+}
+
+// TestPort8080IsProbedButNeverAttributed pins a deliberate decision. /ping is
+// the only GET TorchServe's inference API offers, and a 200 on /ping on 8080
+// would name a large fraction of the web as TorchServe. So 8080 is swept and
+// reported at Info without a service name: misattribution on a buyer's
+// report costs more than the missing name does, and "what is on 8080?" is a
+// question the operator can answer in the room.
+func TestPort8080IsProbedButNeverAttributed(t *testing.T) {
+	var found bool
+	for _, c := range DefaultChecks() {
+		if c.Port != 8080 {
+			continue
+		}
+		found = true
+		if c.Service != ServiceUnknown {
+			t.Errorf("8080 is attributed to %q; 8080 is shared by TorchServe, TGI, LocalAI and most model servers, so it must stay unattributed",
+				c.Service)
+		}
+	}
+	if !found {
+		t.Error("nothing probes 8080; an open model-server port should at least be reported at Info")
+	}
+
+	// And the resulting finding must be the Info-level "we did not identify
+	// this", not a guess.
+	f := Detect([]domain.Observation{obs(ServiceUnknown, 8080, 404, false)})
+	if len(f) != 1 || f[0].RuleID != "RG-EXPOSURE-001" || f[0].Severity != domain.Info {
+		t.Errorf("expected one Info RG-EXPOSURE-001 for an unidentified 8080, got %+v", f)
+	}
+}

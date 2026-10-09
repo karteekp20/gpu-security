@@ -10,10 +10,13 @@
 #
 #   REAL SERVICES  - ray, jupyter, mlflow, ollama. All run CPU-only, so they
 #                    are the genuine article here.
-#   FIXTURES       - vllm, triton. Both ship GPU-bound, multi-gigabyte images
-#                    that cannot run on a CPU-only host. They are represented
-#                    by servers replaying the documented response shapes of
-#                    their health endpoints, and are labelled as fixtures in
+#   FIXTURES       - vllm, triton, sglang, dcgm-exporter, torchserve. The
+#                    first four ship GPU-bound, multi-gigabyte images that
+#                    cannot run on a CPU-only host; TorchServe runs on CPU but
+#                    is a multi-gigabyte pull and is unmaintained upstream.
+#                    They are represented by servers replaying the documented
+#                    response shapes of their health endpoints, taken from
+#                    each project's own docs, and are labelled as fixtures in
 #                    the test output so nobody mistakes them for coverage.
 #   LISTENER       - slurmctld. RG-SLURM-001 is a reachability-only check, so
 #                    a bare TCP listener is a faithful stand-in, not a
@@ -100,6 +103,39 @@ services:
     networks:
       default:
         ipv4_address: 172.31.77.21
+
+  torchserve:
+    image: python:3.11-alpine
+    working_dir: /fixtures
+    volumes:
+      - ./fixtures:/fixtures:ro
+    command: ["python", "/fixtures/shape_server.py", "torchserve"]
+    networks:
+      default:
+        ipv4_address: 172.31.77.22
+
+  sglang:
+    image: python:3.11-alpine
+    working_dir: /fixtures
+    volumes:
+      - ./fixtures:/fixtures:ro
+    command: ["python", "/fixtures/shape_server.py", "sglang"]
+    networks:
+      default:
+        ipv4_address: 172.31.77.23
+
+  # Every GPU node runs one of these. Separate host because it is a different
+  # kind of exposure from the inference servers above: not a control plane
+  # anyone can drive, but an inventory of whose workload is on which GPU.
+  dcgm-exporter:
+    image: python:3.11-alpine
+    working_dir: /fixtures
+    volumes:
+      - ./fixtures:/fixtures:ro
+    command: ["python", "/fixtures/shape_server.py", "dcgm"]
+    networks:
+      default:
+        ipv4_address: 172.31.77.24
 
   # ------------------------------------------------------------ LISTENER ----
 

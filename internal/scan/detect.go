@@ -37,6 +37,26 @@ var rules = map[string]ruleDef{
 		"Restrict the Ollama API (11434) to localhost/trusted networks.", nil},
 	"slurmctld": {"RG-SLURM-001", "Slurm controller port reachable", domain.Medium,
 		"Restrict slurmctld (6817) to the cluster management network only.", nil},
+	// Critical for the same reason as Ray: this is not a hardening gap. The
+	// management API registers a model from any URL the caller names and
+	// TorchServe has no native authentication, so reachability is execution.
+	// TorchServe is also no longer actively maintained upstream, which makes
+	// "upgrade" a weaker remediation than "take it off the network".
+	"torchserve-mgmt": {"RG-TORCHSERVE-001", "Unauthenticated TorchServe management API exposed", domain.Critical,
+		"Bind the management API (8081) to loopback and put it behind an authenticated proxy; set allowed_urls to the registries you actually use. TorchServe has no native auth and is no longer actively maintained upstream, so network isolation is the control.",
+		[]string{"CVE-2023-43654"}},
+	"torchserve-metrics": {"RG-TORCHSERVE-002", "TorchServe metrics endpoint publicly reachable", domain.Low,
+		"Restrict the metrics port (8082) to your monitoring network.", nil},
+	"sglang": {"RG-SGLANG-001", "Unauthenticated SGLang inference API exposed", domain.High,
+		"Place SGLang behind an authenticated gateway; bind --host to loopback or a private address rather than exposing port 30000.", nil},
+	// Medium, not low, and the distinction is the point: this is not one
+	// service's counters like Triton's or TorchServe's metrics port. DCGM
+	// labels per-GPU utilization with the pod, namespace and container using
+	// each device, so an exposed exporter is a workload inventory of every
+	// tenant on the node - which is the cross-tenant visibility this product
+	// exists to talk about.
+	"dcgm-exporter": {"RG-DCGM-001", "NVIDIA DCGM exporter publicly reachable", domain.Medium,
+		"Restrict port 9400 to your monitoring network (in Kubernetes, a ClusterIP service with internalTrafficPolicy: Local rather than a NodePort). The metrics name the pod and namespace using each GPU, so this enumerates tenant workloads.", nil},
 }
 
 var (

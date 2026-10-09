@@ -1,9 +1,16 @@
 """Response-shape fixtures for services that cannot run on a CPU-only host.
 
-vLLM and Triton ship GPU-bound, multi-gigabyte images. Rather than pretend to
-cover them, this replays the documented shapes of their health endpoints and
-the test output labels them as fixtures. The real services in this compose
-stack (Ray, Jupyter, MLflow, Ollama) are what actually validate the probes.
+vLLM, Triton, SGLang and dcgm-exporter ship GPU-bound images; TorchServe runs
+on CPU but is a multi-gigabyte pull and is no longer maintained upstream.
+Rather than pretend to cover them, this replays the documented shapes of their
+health endpoints and the test output labels them as fixtures. The real
+services in this compose stack (Ray, Jupyter, MLflow, Ollama) are what
+actually validate the probes.
+
+Ports and paths here come from each project's own documentation - TorchServe's
+configuration reference, SGLang's server arguments, NVIDIA's dcgm-exporter
+command reference - because a fixture that agrees with a wrong assumption
+proves nothing.
 
 Also provides the negative-case servers: a service that correctly enforces
 authentication, and one bound to loopback so it is reachable from nowhere.
@@ -28,6 +35,26 @@ TRITON_METRICS = (
     b"# HELP nv_inference_request_success Number of successful requests\n"
     b"# TYPE nv_inference_request_success counter\n"
     b'nv_inference_request_success{model="resnet50",version="1"} 0\n'
+)
+# TorchServe's management API with nothing registered: still 200, which is why
+# reachability alone is the finding (CVE-2023-43654).
+TORCHSERVE_MODELS = b'{"models":[]}'
+TORCHSERVE_METRICS = (
+    b"# HELP MemoryUsed Torchserve prometheus gauge\n"
+    b"# TYPE MemoryUsed gauge\n"
+    b'MemoryUsed{Level="Host",Hostname="torchserve"} 2048.0\n'
+)
+SGLANG_MODEL_INFO = (
+    b'{"model_path":"meta-llama/Llama-3-8B","tokenizer_path":'
+    b'"meta-llama/Llama-3-8B","is_generation":true}'
+)
+# The reason RG-DCGM-001 is Medium rather than Low: the labels name the pod,
+# namespace and container using each GPU, so this is a tenant inventory.
+DCGM_METRICS = (
+    b"# HELP DCGM_FI_DEV_GPU_UTIL GPU utilization (in %).\n"
+    b"# TYPE DCGM_FI_DEV_GPU_UTIL gauge\n"
+    b'DCGM_FI_DEV_GPU_UTIL{gpu="0",UUID="GPU-fixture",'
+    b'pod="trainer-0",namespace="tenant-b",container="train"} 97\n'
 )
 
 
@@ -95,6 +122,28 @@ def main():
         threads.append((("0.0.0.0", 8002), handler_for(routes_metrics)))
         # Triton's gRPC port: reachable, speaks no HTTP.
         threading.Thread(target=serve_tcp, args=("0.0.0.0", 8001), daemon=True).start()
+
+    elif mode == "torchserve":
+        json_hdr = {"Content-Type": "application/json"}
+        text_hdr = {"Content-Type": "text/plain"}
+        threads.append((("0.0.0.0", 8081), handler_for({"/models": (200, TORCHSERVE_MODELS, json_hdr)})))
+        threads.append((("0.0.0.0", 8082), handler_for({"/metrics": (200, TORCHSERVE_METRICS, text_hdr)})))
+        # 8080 is TorchServe's inference port, served here precisely because
+        # ray-guard refuses to attribute it: the scan must report it as an
+        # unidentified open port (RG-EXPOSURE-001), never as "TorchServe".
+        threads.append((("0.0.0.0", 8080), handler_for({"/ping": (200, b'{"status": "Healthy"}', json_hdr)})))
+
+    elif mode == "sglang":
+        json_hdr = {"Content-Type": "application/json"}
+        routes = {
+            "/get_model_info": (200, SGLANG_MODEL_INFO, json_hdr),
+            "/health": (200, b"", {}),
+        }
+        threads.append((("0.0.0.0", 30000), handler_for(routes)))
+
+    elif mode == "dcgm":
+        threads.append((("0.0.0.0", 9400),
+                        handler_for({"/metrics": (200, DCGM_METRICS, {"Content-Type": "text/plain"})})))
 
     elif mode == "secured":
         # Every path demands authentication. The service-exposure rule for

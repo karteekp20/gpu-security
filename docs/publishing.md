@@ -66,16 +66,17 @@ of how the repo gets found, and it is the first thing a buyer reads.
 **Description** (GitHub allows 350 characters):
 
 > Agentless security scanner for AI compute infrastructure. Finds exposed and
-> unauthenticated AI orchestrators — Ray, vLLM, Triton, Slurm, MLflow, Jupyter,
-> Ollama — plus TLS and public-bucket problems, then writes a standalone GPU
-> Risk & Isolation Report. Read-only, metadata-only, no egress, one static
-> binary.
+> unauthenticated AI orchestrators — Ray, vLLM, Triton, TorchServe, SGLang,
+> Slurm, MLflow, Jupyter, Ollama — plus exposed GPU telemetry, TLS and bucket
+> problems, then writes a standalone GPU Risk & Isolation Report. Read-only,
+> metadata-only, no egress, one static binary.
 
 **Topics:**
 
 ```
 ai-infrastructure  ai-security  security-scanner  gpu  ray
 neocloud  cspm  mlops-security  golang  infrastructure-security
+torchserve  llm-security
 ```
 
 `ray` and `ai-infrastructure` are the two that matter: ShadowRay is the search

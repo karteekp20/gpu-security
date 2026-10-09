@@ -72,6 +72,23 @@ func defaultChecks() []Check {
 		{"jupyter", 8888, "http", "/api"},
 		{"ollama", 11434, "http", "/api/tags"},
 		{"slurmctld", 6817, "tcp", ""},
+		// TorchServe's management API is the dangerous half: it registers
+		// models from a URL the caller supplies (CVE-2023-43654).
+		{"torchserve-mgmt", 8081, "http", "/models"},
+		{"torchserve-metrics", 8082, "http", "/metrics"},
+		{"sglang", 30000, "http", "/get_model_info"},
+		// DCGM is NVIDIA's standard GPU exporter: present on essentially
+		// every GPU node, and the only check here that is about GPUs rather
+		// than about something serving a model.
+		{"dcgm-exporter", 9400, "http", "/metrics"},
+		// 8080 is probed but never attributed. TorchServe's inference API,
+		// TGI, LocalAI and most things with a model behind them default
+		// here, and the only GET TorchServe offers on it is /ping - so "200
+		// on /ping on 8080" would name a large fraction of the web as
+		// TorchServe. Reporting "something is open on 8080, we did not
+		// identify it" at Info is the honest result, and it is the question
+		// worth asking in the room.
+		{ServiceUnknown, 8080, "http", "/"},
 	}
 }
 

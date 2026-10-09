@@ -11,9 +11,10 @@ Phase-1 schema.
 
 ## ray-guard — L1 agentless scanner
 
-Detects exposed / unauthenticated AI orchestrators (Ray, vLLM, Triton, Slurm, MLflow, Jupyter,
-Ollama), TLS problems, and publicly listable object storage — then emits a standalone
-"GPU Risk & Isolation Report" you can hand to a security lead.
+Detects exposed / unauthenticated AI orchestrators (Ray, vLLM, Triton, TorchServe, SGLang, Slurm,
+MLflow, Jupyter, Ollama), exposed GPU telemetry (NVIDIA DCGM), TLS problems, and publicly listable
+object storage — then emits a standalone "GPU Risk & Isolation Report" you can hand to a security
+lead.
 
 **Read-only and benign.** Detection is by observation, never exploitation: one GET per check, to
 a documented health endpoint, with no request body. It confirms an unauthenticated Ray dashboard
@@ -96,6 +97,10 @@ pipeline should fail rather than pass green forever on a scan of nowhere.
 | `RG-RAY-002` | Ray client port reachable | high |
 | `RG-VLLM-001` | Unauthenticated vLLM inference API | high |
 | `RG-TRITON-001` / `-003` / `-002` | Triton HTTP / gRPC / metrics exposure | high / medium / low |
+| `RG-TORCHSERVE-001` | Unauthenticated TorchServe management API (CVE-2023-43654, "ShellTorch") | critical |
+| `RG-TORCHSERVE-002` | TorchServe metrics endpoint exposure | low |
+| `RG-SGLANG-001` | Unauthenticated SGLang inference API | high |
+| `RG-DCGM-001` | NVIDIA DCGM exporter publicly reachable (names the pod/namespace per GPU) | medium |
 | `RG-MLFLOW-001` | Unauthenticated MLflow server | high |
 | `RG-JUPYTER-001` | Jupyter reachable without token/auth | high |
 | `RG-OLLAMA-001` | Unauthenticated Ollama API | medium |
@@ -104,6 +109,12 @@ pipeline should fail rather than pass green forever on a scan of nowhere.
 | `RG-TLS-001` | Certificate fails verification (self-signed / expired / mismatched) | medium |
 | `RG-TLS-002` | Authenticated service served over plaintext HTTP | medium |
 | `RG-EXPOSURE-001` | Open port on an AI-infrastructure port, service unidentified | info |
+
+Port 8080 is swept but **never attributed**. TorchServe's inference API, TGI, LocalAI and most
+things with a model behind them default there, and the only `GET` TorchServe offers on it is
+`/ping` — so a 200 would name a large fraction of the web as TorchServe. An open 8080 is reported
+as `RG-EXPOSURE-001` instead. Misattributing a service on a customer's report costs more than the
+missing name does.
 
 Grade thresholds are **provisional** until validated with buyers (CLAUDE.md §10.0).
 

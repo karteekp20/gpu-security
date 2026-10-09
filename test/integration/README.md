@@ -30,11 +30,30 @@ Coverage is not uniform, and the split is deliberate:
 | Ollama | **Real** | CPU-only; `/api/tags` answers without a model pull |
 | vLLM | *Fixture* | GPU-bound image; replays documented `/v1/models` shape |
 | Triton | *Fixture* | GPU-bound, ~15GB image; replays `/v2/health/ready` and `/metrics` |
+| TorchServe | *Fixture* | Runs on CPU, but a multi-gigabyte pull and unmaintained upstream; replays `/models` (8081), `/metrics` (8082) and `/ping` (8080) |
+| SGLang | *Fixture* | GPU-bound image; replays `/get_model_info` on 30000 |
+| dcgm-exporter | *Fixture* | Needs a real GPU to produce metrics; replays `/metrics` on 9400 |
 | Slurm | *Fixture* | `RG-SLURM-001` is reachability-only, so a TCP listener is faithful |
 
 The fixtures are labelled as such in the test output. They verify wiring, not
 that we understand those services' real behaviour — if you get access to a GPU
-host, promoting vLLM and Triton to real containers is worth doing.
+host, promoting vLLM, Triton, SGLang and dcgm-exporter to real containers is
+worth doing. TorchServe is the cheapest promotion: it needs no GPU, only the
+patience for the image.
+
+**Ports and paths in these fixtures come from each project's own
+documentation**, not from recollection — TorchServe's configuration
+reference, SGLang's server-arguments page, NVIDIA's `dcgm-exporter` command
+reference. A fixture that agrees with a wrong assumption proves nothing, and
+a check on the wrong port is a silent miss, which reads to an operator as a
+clean result.
+
+The TorchServe fixture also serves 8080 — TorchServe's inference port, whose
+only `GET` is `/ping`. ray-guard deliberately sweeps 8080 **without
+attributing it**, so the assertion there is that the scan reports
+`RG-EXPOSURE-001` at Info and never names a service. That port is shared by
+TGI, LocalAI and most things with a model behind them; a 200 on `/ping` is not
+evidence of TorchServe.
 
 ## The negative cases matter as much as the positive ones
 

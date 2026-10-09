@@ -37,6 +37,9 @@ const (
 	addrOllama   = "172.31.77.13"
 	addrVLLM     = "172.31.77.20"
 	addrTriton   = "172.31.77.21"
+	addrTorch    = "172.31.77.22"
+	addrSGLang   = "172.31.77.23"
+	addrDCGM     = "172.31.77.24"
 	addrSlurm    = "172.31.77.30"
 	addrSecured  = "172.31.77.40"
 	addrLoopback = "172.31.77.41"
@@ -50,6 +53,9 @@ const probeTimeout = 5 * time.Second
 var fixtureServices = map[string]string{
 	addrVLLM:   "vLLM (fixture: GPU-only image)",
 	addrTriton: "Triton (fixture: GPU-only image)",
+	addrTorch:  "TorchServe (fixture: unmaintained upstream, multi-GB pull)",
+	addrSGLang: "SGLang (fixture: GPU-only image)",
+	addrDCGM:   "dcgm-exporter (fixture: needs a real GPU)",
 	addrSlurm:  "Slurm (fixture: TCP listener; RG-SLURM-001 is reachability-only)",
 }
 
@@ -176,6 +182,9 @@ func TestFixtureServicesAreDetected(t *testing.T) {
 	}{
 		{addrVLLM, "RG-VLLM-001"},
 		{addrTriton, "RG-TRITON-001"},
+		{addrTorch, "RG-TORCHSERVE-001"},
+		{addrSGLang, "RG-SGLANG-001"},
+		{addrDCGM, "RG-DCGM-001"},
 		{addrSlurm, "RG-SLURM-001"},
 	}
 	for _, tc := range cases {
@@ -187,6 +196,29 @@ func TestFixtureServicesAreDetected(t *testing.T) {
 				t.Errorf("%s did not fire; got %v", tc.rule, ruleIDs(findings))
 			}
 		})
+	}
+}
+
+// The TorchServe fixture also serves 8080, TorchServe's inference port, whose
+// only GET is /ping. ray-guard must report that something is listening
+// without claiming to know what - naming a random 8080 as TorchServe on a
+// buyer's report is the failure mode this behaviour exists to prevent.
+func TestPort8080IsReportedWithoutBeingNamed(t *testing.T) {
+	findings := scanHost(t, addrTorch)
+	f := findRule(findings, "RG-EXPOSURE-001")
+	if f == nil {
+		t.Fatalf("expected RG-EXPOSURE-001 for the open 8080; got %v", ruleIDs(findings))
+	}
+	if f.Port != 8080 {
+		t.Errorf("RG-EXPOSURE-001 fired on port %d, want 8080", f.Port)
+	}
+	if f.Severity != domain.Info {
+		t.Errorf("severity = %s, want info: an unidentified port is not a judgement", f.Severity)
+	}
+	for _, id := range ruleIDs(findings) {
+		if id == "RG-VLLM-001" || id == "RG-TRITON-001" {
+			t.Errorf("8080 was attributed to a named service: %v", ruleIDs(findings))
+		}
 	}
 }
 

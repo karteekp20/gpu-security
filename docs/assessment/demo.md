@@ -22,16 +22,18 @@ Check it worked:
 make demo         # ~15s, writes ./report
 ```
 
-You should get grade **F**, 8 affected hosts, `RG-RAY-001` at the top. If you
-don't, fix that before the call rather than improvising in it.
+You should get grade **F**, 11 affected hosts, 16 findings, and `RG-RAY-001`
+at the top of "Fix these first" with `RG-TORCHSERVE-001` second. If you don't,
+fix that before the call rather than improvising in it.
 
 Have `./report/report.html` open in a browser tab, ready.
 
 ## The run (about 60 seconds)
 
 > "This is a small GPU cluster I've configured the way a lot of them
-> accidentally are. Nothing exotic — Ray, vLLM, Jupyter, MLflow, Ollama.
-> I'll scan the subnet; I haven't told the tool what's on it."
+> accidentally are. Nothing exotic — Ray, vLLM, Triton, TorchServe, SGLang,
+> Jupyter, MLflow, Ollama, and the GPU exporter every node runs. I'll scan the
+> subnet; I haven't told the tool what's on it."
 
 ```bash
 make demo
@@ -52,7 +54,7 @@ where you say the thing that separates you from a port scanner:
 > "Every finding comes with the fix. It's an audit-to-fix tool, not an
 > audit-only one."
 
-**3. The Ray finding, and why it is different.** This is the whole pitch:
+**3. The two criticals, and why they are different.** This is the whole pitch:
 
 > "This one isn't a hardening gap. Ray's Jobs API takes job submissions from
 > anyone who can reach it — that's the design. So an exposed dashboard means
@@ -61,6 +63,26 @@ where you say the thing that separates you from a port scanner:
 > found exposed clusters by internet-wide scanning and used them to mine
 > crypto and steal credentials. Nobody targeted those companies. They were
 > just reachable."
+
+Then point at the second critical, because one example is a bug and two are a
+pattern:
+
+> "And here's the same shape again in a completely different project.
+> TorchServe's management API registers a model from any URL you hand it, and
+> TorchServe ships with no authentication at all — that's CVE-2023-43654,
+> ShellTorch. It's also unmaintained upstream now, so there is no patch
+> coming; the only control is keeping it off the network. This is what we mean
+> by the blind spot: it isn't one CVE, it's that AI infrastructure ships
+> control planes that assume a trusted network and then gets deployed on one
+> that isn't."
+
+**3b. The DCGM finding, if the room is technical.** It is the one that is
+*only* about GPUs:
+
+> "That one's NVIDIA's GPU exporter, which runs on every node. Exposed, it
+> hands over per-GPU utilization labelled with the pod and namespace using it
+> — so it's an inventory of whose workload is on which GPU. No CVE, nothing
+> exploitable. It's just a tenant list for anyone who asks."
 
 **4. The footer.** Short, and it pre-empts the question they are already
 forming:
@@ -75,10 +97,11 @@ forming:
 Say both unprompted. It costs you nothing and buys the credibility you need
 for everything else you claim.
 
-- **"Two of the services in this demo are stand-ins."** vLLM and Triton ship
-  GPU-only images that won't run on a laptop, so those two replay the real
-  response shapes. Ray, Jupyter, MLflow and Ollama are the genuine software —
-  and Ray, the one that matters, is real.
+- **"Several of the services in this demo are stand-ins."** vLLM, Triton,
+  SGLang and the DCGM exporter need GPUs, and TorchServe is a multi-gigabyte
+  pull, so those five replay the documented response shapes of their health
+  endpoints. Ray, Jupyter, MLflow and Ollama are the genuine software — and
+  Ray, the one that matters, is real.
 - **"The grades are provisional."** The A+ to F bands aren't validated yet.
   Ask them where they'd move the thresholds — the answer is genuinely useful
   and the question signals you are not selling them a finished opinion.
@@ -96,8 +119,13 @@ with [`authorization.md`](authorization.md) — not with a scan.
 
 - **Compose says "client version is too old"** — your compose plugin predates
   the daemon: `DOCKER_API_VERSION=1.44 make demo-up`.
-- **Fewer than 8 hosts found** — something didn't come up. `make demo-down &&
+- **Fewer than 11 hosts found** — something didn't come up. `make demo-down &&
   make demo-up` and check the output of `wait-ready.sh`.
+- **`N/A — INCONCLUSIVE`, nothing responded** — the stack is gone. Most
+  likely you ran `make test-integration` after `make demo-up`: it brings the
+  same stack up and tears it down again on exit. Re-run `make demo-up`.
+  (Worth noting that the tool said "inconclusive" rather than "A+" here —
+  that is the behaviour the report footer is describing.)
 - **Asked something you can't answer** — say so and write it down. "I don't
   know, I'll find out" costs nothing here; a confident wrong answer to a
   security lead costs the deal. See [`objections.md`](objections.md), including
