@@ -48,8 +48,17 @@ last chance to mention the host nobody told you about.
 unremarkable to watch is part of the reassurance.
 
 ```bash
-./bin/ray-guard -cidr <their ranges> -out ~/assessments/<client>-<date>
+./bin/ray-guard -cidr <their ranges> \
+  -label "<Client> — <cluster> — <date>" \
+  -out ~/assessments/<client>-<date>
 ```
+
+Pass `-label`. It is the difference between a report that names the
+engagement and three identical-looking attachments in someone's inbox. The
+report also records the host you scanned from, which is what makes a
+"filtered" result interpretable later. Neither reaches the benchmark
+snapshot — the label is the field most likely to carry a client's name, so it
+is omitted from the anonymized file by construction.
 
 For a tenant-side engagement, add `-buckets` if object storage is in scope.
 

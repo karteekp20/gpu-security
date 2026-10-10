@@ -1,10 +1,12 @@
 package benchmark
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -133,5 +135,54 @@ func TestEmptyScanProducesCleanSnapshot(t *testing.T) {
 	}
 	if snap.Grade != "A+" || len(snap.Findings) != 0 {
 		t.Errorf("a clean scan should snapshot as A+ with no records, got %+v", snap)
+	}
+}
+
+// TestEngagementLabelNeverReachesTheSnapshot is the P9 guard that matters
+// most. -label is free text an operator types to say which engagement a
+// report belongs to, so in practice it contains a customer's name - and the
+// snapshot is the one artifact designed to be shared with us and published as
+// an aggregate index. The label must not be in it, and neither must the host
+// the scan ran from.
+func TestEngagementLabelNeverReachesTheSnapshot(t *testing.T) {
+	start := time.Date(2026, 9, 20, 10, 0, 0, 0, time.UTC)
+	r := domain.NewScanResult(start, start.Add(time.Second), respondedHosts(3),
+		[]domain.Finding{{
+			RuleID: "RG-RAY-001", Title: "Unauthenticated Ray dashboard / Jobs API exposed",
+			Severity: domain.Critical, Host: "10.1.2.3", Port: 8265, Service: "ray-dashboard",
+		}})
+	const client = "ACME-CONFIDENTIAL-CLIENT-NAME"
+	const vantage = "assessor-laptop-7"
+	r.Label = client + " - cluster A"
+	r.ScannedFrom = vantage
+
+	snap, err := Build(r, time.Now())
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	b, err := json.Marshal(snap)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	for what, needle := range map[string]string{
+		"the engagement label": client,
+		"the scanning host":    vantage,
+	} {
+		if bytes.Contains(b, []byte(needle)) {
+			t.Errorf("P9 VIOLATION: the snapshot carries %s", what)
+		}
+	}
+
+	// And structurally, so this cannot be reintroduced by a field rather than
+	// by a value.
+	rt := reflect.TypeOf(Snapshot{})
+	for i := 0; i < rt.NumField(); i++ {
+		switch name := strings.ToLower(rt.Field(i).Name); {
+		case strings.Contains(name, "label"),
+			strings.Contains(name, "from"),
+			strings.Contains(name, "hostname"):
+			t.Errorf("Snapshot.%s: the snapshot must not have a field for the label or the vantage",
+				rt.Field(i).Name)
+		}
 	}
 }

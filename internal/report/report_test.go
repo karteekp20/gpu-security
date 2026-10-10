@@ -40,7 +40,12 @@ func fixture() domain.ScanResult {
 			Detail:      "Certificate on port 8888 is self-signed (expires 2027-01-01)",
 			Remediation: "Replace the certificate with one issued by a trusted CA, matching the service hostname and within its validity window."},
 	}
-	return domain.NewScanResult(start, start.Add(12*time.Second), respondedHosts("10.0.0.5", "10.0.0.6", "10.0.0.7", "10.0.0.8"), findings)
+	r := domain.NewScanResult(start, start.Add(12*time.Second), respondedHosts("10.0.0.5", "10.0.0.6", "10.0.0.7", "10.0.0.8"), findings)
+	// The engagement label and the vantage are part of the artifact a buyer
+	// reads, so they belong in the golden file rather than in a side test.
+	r.Label = "Example Neocloud - cluster A - 2026-09-20"
+	r.ScannedFrom = "assessor-laptop"
+	return r
 }
 
 func cleanFixture() domain.ScanResult {

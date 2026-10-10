@@ -110,7 +110,16 @@ type Finding struct {
 const GradeInconclusive Grade = "N/A"
 
 type ScanResult struct {
-	ScannerVersion    string           `json:"scanner_version"`
+	ScannerVersion string `json:"scanner_version"`
+	// Label is free text the operator supplies with -label: which engagement
+	// this report belongs to. It is the one field here most likely to name a
+	// customer, so it must never reach the anonymized benchmark snapshot (P9).
+	Label string `json:"label,omitempty"`
+	// ScannedFrom records the vantage - the host the scan ran from. "Three of
+	// twelve didn't answer" means something different when the answer is "you
+	// were on the wrong side of a firewall", and a report read a month later
+	// has no other way to say where it was taken from.
+	ScannedFrom       string           `json:"scanned_from,omitempty"`
 	StartedAt         time.Time        `json:"started_at"`
 	CompletedAt       time.Time        `json:"completed_at"`
 	TargetsScanned    int              `json:"targets_scanned"`

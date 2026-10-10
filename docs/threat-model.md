@@ -176,12 +176,18 @@ honest option.
 
 **Controls.**
 - The report contains only hosts the operator explicitly named, plus ports,
-  rule IDs, and remediation text.
+  rule IDs, remediation text, the engagement label the operator passed with
+  `-label`, and the host the scan ran from. The last two are evidence about
+  the assessment rather than about the customer, and both are deliberately
+  absent from the snapshot below.
 - The report is self-contained — no external asset references, asserted by
   test — so opening it cannot beacon to anyone, including us.
 - The anonymized snapshot is a **separate opt-in file**: it replaces hostnames
   with salted hashes using a single-use random salt, and drops finding detail
-  text entirely.
+  text entirely. It has no field for the engagement label or the scanning
+  host, so neither can be included by accident — asserted both by value and
+  structurally in `internal/benchmark/snapshot_test.go`, and confirmed by
+  adding such a field and watching the test fail.
 
 **Note.** The report deliberately *does* contain raw hostnames. It is the
 operator's own inventory, written to their own disk, for their own use.

@@ -46,7 +46,10 @@ make build
 ```
 
 Writes `report/report.json` and `report/report.html`. The HTML is self-contained — no external
-assets — so it opens on an air-gapped workstation and mails as one file. To render a PDF
+assets — so it opens on an air-gapped workstation and mails as one file. It carries the
+`-label` you passed and the host the scan ran from, so a report read a month later still says
+which engagement it was and from which vantage — "three of twelve didn't answer" means something
+different when the answer is "you were on the wrong side of a firewall". To render a PDF
 (optional, uses local Chrome; the scanner itself needs nothing):
 
 ```bash
@@ -65,6 +68,7 @@ make report-pdf IN=x.html OUT=x.pdf
 | `-ports` | Override probe ports: `vllm=8100,9000` (service=port, and/or bare ports) |
 | `-buckets` | Object-storage URLs to check for public listing |
 | `-out` | Report output directory (default `./report`) |
+| `-label` | Engagement label shown on the report (e.g. `"Acme Corp — 2026-10-12"`); never written to the snapshot |
 | `-benchmark-snapshot` | Write an anonymized snapshot to this path (see below) |
 | `-timeout` | Per-probe timeout (default 4s) |
 | `-concurrency` | Max concurrent host probes (default 32) |

@@ -37,6 +37,7 @@ func run() int {
 	portsArg := flag.String("ports", "", "override probe ports: service=port pairs and/or bare ports (e.g. vllm=8100,9000)")
 	bucketsArg := flag.String("buckets", "", "comma-separated object-storage bucket URLs to check for public listing")
 	outDir := flag.String("out", "./report", "output directory for report files")
+	label := flag.String("label", "", "engagement label shown on the report (e.g. \"Acme Corp - 2026-10-12\"); never written to the benchmark snapshot")
 	snapshotPath := flag.String("benchmark-snapshot", "", "write an anonymized benchmark snapshot to this path (no network egress)")
 	timeout := flag.Duration("timeout", 4*time.Second, "per-probe timeout")
 	concurrency := flag.Int("concurrency", 32, "max concurrent host probes")
@@ -97,6 +98,12 @@ func run() int {
 
 	findings := scan.Detect(observations)
 	result := domain.NewScanResult(start, time.Now(), hosts, findings)
+	result.Label = strings.TrimSpace(*label)
+	// The vantage is part of the evidence: a month later, "three of twelve
+	// didn't answer" is only interpretable alongside where the scan ran from.
+	if h, err := os.Hostname(); err == nil {
+		result.ScannedFrom = h
+	}
 
 	if err := report.Write(*outDir, result); err != nil {
 		fmt.Fprintln(os.Stderr, "report error:", err)

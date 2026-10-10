@@ -55,7 +55,9 @@ type Snapshot struct {
 
 const notice = "Anonymized aggregate metadata only. Host identifiers are salted hashes with a " +
 	"single-use random salt and cannot be reversed or correlated across snapshots. " +
-	"Contains no hostnames, IPs, finding details, credentials, or any customer content."
+	"Contains no hostnames, IPs, finding details, credentials, or any customer content. " +
+	"The engagement label (-label) and the scanning host are omitted by construction, " +
+	"not stripped: Snapshot has no field for either."
 
 // Build reduces a scan result to anonymized metadata. A fresh random salt is
 // generated per snapshot, so host identifiers are stable within one file and
