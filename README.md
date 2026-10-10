@@ -18,7 +18,9 @@ lead.
 
 **Read-only and benign.** Detection is by observation, never exploitation: one GET per check, to
 a documented health endpoint, with no request body. It confirms an unauthenticated Ray dashboard
-by getting a 200 — not by submitting a job.
+by getting a 200 — not by submitting a job. On a port where a service *is* identified it sends one
+further GET, to `/ray-guard-probe-404`: a server that answers 2xx to that answers 2xx to anything,
+and must not be reported as whatever service shares its port.
 
 **Metadata only.** No model weights, prompts, training data, inference content, or object
 contents are read, stored, or transmitted. This is enforced by a build-blocking test suite

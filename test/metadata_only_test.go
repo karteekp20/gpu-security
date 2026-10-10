@@ -318,15 +318,18 @@ func TestProbesAreBenignAndReadOnly(t *testing.T) {
 func TestDefaultProbePathsAreBenign(t *testing.T) {
 	// Known-good, side-effect-free health/info endpoints.
 	allowed := map[string]bool{
-		"":                 true,
-		"/":                true,
-		"/api":             true,
-		"/api/tags":        true,
-		"/metrics":         true,
-		"/models":          true,
-		"/get_model_info":  true,
-		"/v1/models":       true,
-		"/v2/health/ready": true,
+		"":          true,
+		"/":         true,
+		"/api":      true,
+		"/api/tags": true,
+		"/metrics":  true,
+		"/models":   true,
+		// The wildcard control probe. It exists so a catch-all server is not
+		// reported as whatever service shares its port.
+		"/ray-guard-probe-404": true,
+		"/get_model_info":      true,
+		"/v1/models":           true,
+		"/v2/health/ready":     true,
 	}
 	forbiddenSubstrings := []string{
 		"..", "?", "&", ";", "submit", "exec", "eval", "shell", "cmd",

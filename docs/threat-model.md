@@ -19,7 +19,8 @@ being asked, is part of the low-friction guarantee that makes L1 sellable (P10).
 
 A single static Go binary, run by an operator from a host they control, against
 hosts they are authorized to assess. It opens TCP connections, issues at most
-one HTTP GET per check, and writes three local files: `report.json`,
+one HTTP GET per check (plus one control request per identified port, see
+T8), and writes three local files: `report.json`,
 `report.html`, and (only if asked) an anonymized benchmark snapshot.
 
 It has **no** network egress beyond the targets the operator named. It does not
@@ -104,7 +105,8 @@ triggers an incident on a cluster running a multi-week training job.*
 
 **Controls.**
 - GET only, no request body, no method other than GET — asserted in tests.
-- Exactly one request per check; no retries against a responding host.
+- Exactly one request per check, plus a single control request on a port
+  where a service was identified (T8); no retries against a responding host.
 - Bounded concurrency (`-concurrency`, default 32) and a short per-probe
   timeout (`-timeout`, default 4s).
 - Probe paths are restricted to a reviewed allowlist of documented health and
@@ -244,6 +246,42 @@ User-Agent makes the traffic trivially attributable.
 that matters is that ray-guard is a *detector*, not an exploit tool: it cannot
 be turned into an attack by flag combination, because there are no flags that
 change what a probe sends.
+
+### T8 — The report names a service that is not there
+
+*A host answers 2xx to every path — an SPA dev server, a catch-all ingress
+route, a captive portal, a misconfigured reverse proxy — and the scan
+attributes it to whatever orchestrator shares that port.*
+
+Also not an attack, and in the same family as T4: the damage is a confident
+claim that happens to be false. On 8265 it produces a **critical**
+"unauthenticated Ray dashboard exposed" against something harmless. On 8000 it
+produced vLLM *and* Triton at once — two services on one port, which cannot
+happen and is immediately visible to the person reading the report. One such
+finding in a buyer's own environment costs more credibility than ten correct
+ones earn.
+
+**Controls.**
+- A service is attributed only on a 2xx from its own documented health path,
+  never from an open port.
+- On a port where something was identified, one further GET to
+  `/ray-guard-probe-404`, a path nothing serves. A 2xx there means the port
+  discriminates nothing, so the observation is downgraded to an unidentified
+  service at Info with the reason stated in the finding.
+- Real Ray, Jupyter, MLflow, Ollama and TorchServe were each checked against a
+  nonexistent path and all answer 404, so the control costs correct
+  attribution nothing. That was measured against the running containers, not
+  assumed — a control probe that real services happened to 2xx would have
+  silently downgraded the flagship finding.
+- An unidentified port is reported at Info and never guessed at
+  (`RG-EXPOSURE-001`), and 8080 is deliberately swept without attribution
+  because it is shared by TorchServe, TGI, LocalAI and most model servers.
+- A control request that fails is treated as "this port discriminates fine",
+  because silently downgrading a real finding is the worse error.
+
+**Residual risk.** A server that serves exactly one orchestrator's health path
+and 404s everything else is indistinguishable from that orchestrator. We
+accept that: it is the same evidence a human would have.
 
 ## Explicitly out of scope (Phase 0)
 

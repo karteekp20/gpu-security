@@ -7,16 +7,33 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"gpusecurity/internal/domain"
 )
 
+// discriminating wraps a handler so it 404s the wildcard control path, which
+// is what every real service in the integration stack does - Ray, Jupyter,
+// MLflow, Ollama and TorchServe were all checked. Blanket-200 handlers are
+// not a faithful stand-in for a service: they are a captive portal, and
+// ProbeHost now refuses to attribute those. TestProbeRefusesToNameAWildcard
+// covers that case deliberately.
+func discriminating(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == controlPath {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		h(w, r)
+	}
+}
+
 // serve starts a local HTTP server and returns its host and port.
 func serve(t *testing.T, h http.HandlerFunc) (string, int) {
 	t.Helper()
-	srv := httptest.NewServer(h)
+	srv := httptest.NewServer(discriminating(h))
 	t.Cleanup(srv.Close)
 	host, portStr, err := net.SplitHostPort(srv.Listener.Addr().String())
 	if err != nil {
@@ -242,7 +259,7 @@ func TestTLSProbeOnPlaintextPort(t *testing.T) {
 // A TLS service still gets probed: an unauthenticated API behind a bad
 // certificate is exposed twice over, and must not be skipped.
 func TestProbeReachesServiceBehindUntrustedTLS(t *testing.T) {
-	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTLSServer(discriminating(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
@@ -471,4 +488,178 @@ func FuzzApplyPortOverrides(f *testing.F) {
 			}
 		}
 	})
+}
+
+// TestProbeOverIPv6 probes a real listener on the IPv6 loopback. The address
+// handling is the point: an IPv6 literal has to be bracketed in a URL, and
+// `[::1]:8265` is the kind of thing that works in net.Dial and then breaks
+// one layer up in the HTTP client. CIDR expansion already accepts v6 blocks
+// (/112 and narrower), so a v6-only management network is something an
+// operator can legitimately point this at.
+func TestProbeOverIPv6(t *testing.T) {
+	ln, err := net.Listen("tcp", "[::1]:0")
+	if err != nil {
+		t.Skipf("no IPv6 loopback on this host: %v", err)
+	}
+	srv := &http.Server{
+		Handler:           discriminating(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }),
+		ReadHeaderTimeout: 2 * time.Second,
+	}
+	go func() { _ = srv.Serve(ln) }()
+	t.Cleanup(func() { _ = srv.Close() })
+
+	_, portStr, err := net.SplitHostPort(ln.Addr().String())
+	if err != nil {
+		t.Fatalf("splitting listener address: %v", err)
+	}
+	port, _ := strconv.Atoi(portStr)
+
+	obs := probeOne(t, "::1", []Check{{"ray-dashboard", port, "http", "/"}})
+	if len(obs) != 1 {
+		t.Fatalf("expected 1 observation over IPv6, got %+v", obs)
+	}
+	if !obs[0].Unauth || obs[0].Service != "ray-dashboard" {
+		t.Errorf("expected an unauthenticated ray-dashboard over IPv6, got %+v", obs[0])
+	}
+	if obs[0].Host != "::1" {
+		t.Errorf("the finding should name the target as given (%q), got %q", "::1", obs[0].Host)
+	}
+
+	// And the whole pipeline, since a report that renders the host wrongly is
+	// as useless as one that missed it.
+	findings := Detect(obs)
+	if len(findings) != 1 || findings[0].RuleID != "RG-RAY-001" {
+		t.Fatalf("expected RG-RAY-001 over IPv6, got %+v", findings)
+	}
+	if findings[0].Host != "::1" {
+		t.Errorf("finding host = %q, want ::1", findings[0].Host)
+	}
+}
+
+// TestProbeRefusesToNameAWildcard is the regression test for a real false
+// positive. A server that answers 2xx to everything - an SPA dev server, a
+// catch-all ingress route, a captive portal - used to be reported as
+// whatever service happens to share its port. On 8265 that is a *critical*
+// "unauthenticated Ray dashboard"; on 8000 it was vLLM and Triton at once,
+// two services on one port, which cannot happen and is visibly wrong to the
+// person reading the report.
+func TestProbeRefusesToNameAWildcard(t *testing.T) {
+	// Deliberately NOT wrapped in discriminating(): 200 on every path.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	host, portStr, _ := net.SplitHostPort(srv.Listener.Addr().String())
+	port, _ := strconv.Atoi(portStr)
+
+	t.Run("a single check is not promoted to a critical finding", func(t *testing.T) {
+		obs := probeOne(t, host, []Check{{"ray-dashboard", port, "http", "/"}})
+		if len(obs) != 1 {
+			t.Fatalf("expected 1 observation, got %+v", obs)
+		}
+		if obs[0].Service != ServiceUnknown {
+			t.Errorf("a catch-all server was named %q; it answers 2xx on any path", obs[0].Service)
+		}
+		findings := Detect(obs)
+		if len(findings) != 1 || findings[0].RuleID != "RG-EXPOSURE-001" {
+			t.Fatalf("expected one RG-EXPOSURE-001, got %+v", findings)
+		}
+		if findings[0].Severity != domain.Info {
+			t.Errorf("severity = %s, want info: we do not know what this is", findings[0].Severity)
+		}
+	})
+
+	t.Run("a shared port does not yield two services at once", func(t *testing.T) {
+		obs := probeOne(t, host, []Check{
+			{"vllm", port, "http", "/v1/models"},
+			{"triton", port, "http", "/v2/health/ready"},
+		})
+		if len(obs) != 1 {
+			t.Fatalf("expected a single unidentified observation, got %+v", obs)
+		}
+		for _, f := range Detect(obs) {
+			if f.RuleID == "RG-VLLM-001" || f.RuleID == "RG-TRITON-001" {
+				t.Errorf("a catch-all server was attributed to %s", f.RuleID)
+			}
+		}
+	})
+}
+
+// TestControlProbeCostsOneRequest pins the cost of the wildcard control, since
+// "one GET per service check" is a claim we make to CISOs in writing. The
+// control runs only on a port where a service was identified.
+func TestControlProbeCostsOneRequest(t *testing.T) {
+	var mu sync.Mutex
+	paths := []string{}
+	// Counted before discriminating(), so the control request is visible to
+	// the test rather than short-circuited by the helper.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		paths = append(paths, r.URL.Path)
+		mu.Unlock()
+		if r.URL.Path == controlPath {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	host, portStr, _ := net.SplitHostPort(srv.Listener.Addr().String())
+	port, _ := strconv.Atoi(portStr)
+
+	probeOne(t, host, []Check{{"ray-dashboard", port, "http", "/"}})
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(paths) != 2 {
+		t.Fatalf("expected exactly 2 requests (health path + control), got %d: %v", len(paths), paths)
+	}
+	if paths[0] != "/" || paths[1] != controlPath {
+		t.Errorf("requests = %v, want [/ %s]", paths, controlPath)
+	}
+}
+
+// TestMetricsPortsAreExemptFromTheWildcardControl pins the exemption and the
+// reason for it. Real Triton's metrics server answers 200 on any path, which
+// is ordinary for a Prometheus-style endpoint. Applying the wildcard control
+// there would mean RG-TRITON-002 could never fire against Triton itself.
+func TestMetricsPortsAreExemptFromTheWildcardControl(t *testing.T) {
+	// 200 on everything, exactly like Triton's metrics server.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	host, portStr, _ := net.SplitHostPort(srv.Listener.Addr().String())
+	port, _ := strconv.Atoi(portStr)
+
+	obs := probeOne(t, host, []Check{{"triton-metrics", port, "http", "/metrics"}})
+	if len(obs) != 1 || obs[0].Service != "triton-metrics" {
+		t.Fatalf("a metrics endpoint that ignores the path must still be attributed, got %+v", obs)
+	}
+	findings := Detect(obs)
+	if len(findings) != 1 || findings[0].RuleID != "RG-TRITON-002" {
+		t.Fatalf("expected RG-TRITON-002, got %+v", findings)
+	}
+
+	// But a service rule on the same kind of server is still refused: the
+	// exemption is per service, not per port.
+	obs = probeOne(t, host, []Check{{"triton", port, "http", "/v2/health/ready"}})
+	if len(obs) != 1 || obs[0].Service != ServiceUnknown {
+		t.Errorf("the service rule must still refuse a catch-all server, got %+v", obs)
+	}
+}
+
+// TestEveryPathAgnosticServiceExists guards against the exemption list
+// outliving the checks it names - a typo there silently re-enables the
+// control for a metrics rule and the rule quietly stops firing.
+func TestEveryPathAgnosticServiceExists(t *testing.T) {
+	known := map[string]bool{}
+	for _, c := range DefaultChecks() {
+		known[c.Service] = true
+	}
+	for svc := range pathAgnosticServices {
+		if !known[svc] {
+			t.Errorf("pathAgnosticServices names %q, which is not in the default check set", svc)
+		}
+	}
 }

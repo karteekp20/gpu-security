@@ -10,8 +10,10 @@
 #
 #   REAL SERVICES  - ray, jupyter, mlflow, ollama, torchserve. All run
 #                    CPU-only, so they are the genuine article here.
-#   FIXTURES       - vllm, triton, sglang, dcgm-exporter. All ship GPU-bound
-#                    images that cannot run on a CPU-only host. They are
+#   FIXTURES       - vllm, triton, sglang, dcgm-exporter. vLLM, SGLang and
+#                    DCGM ship GPU-bound images; Triton's runs CPU-only but
+#                    is 16GB, so the real one lives in the `heavy` profile
+#                    (triton-real, below) and CI uses the fixture. They are
 #                    represented by servers replaying the documented response
 #                    shapes of their health endpoints, taken from each
 #                    project's own docs, and are labelled as fixtures in the
@@ -152,6 +154,33 @@ services:
     networks:
       default:
         ipv4_address: 172.31.77.24
+
+  # ------------------------------------------------- OPT-IN, REAL, HEAVY ----
+  # Real Triton, CPU-only (no --gpus needed; NVIDIA's own quickstart says the
+  # same image runs without one). In a profile because the image is 16GB,
+  # which does not fit the ~14GB free disk on a standard GitHub runner - so
+  # CI keeps the fixture on .21 and this is how a human verifies the fixture
+  # is not lying:
+  #
+  #   docker compose --profile heavy up -d triton-real
+  #   go test -tags integration ./test/integration/ -run RealTriton -v
+  #
+  # Verified 2026-10-10 against 26.09-py3 with an empty model repository:
+  # /v2/health/ready 200, /metrics 200 on 8002, 8001 open, /v1/models 404
+  # (so vLLM's path does not match it), and the wildcard control 404.
+  triton-real:
+    profiles: ["heavy"]
+    image: nvcr.io/nvidia/tritonserver:26.09-py3
+    command: >
+      tritonserver --model-repository=/models
+      --model-control-mode=explicit
+      --strict-readiness=false
+      --exit-on-error=false
+    volumes:
+      - ./fixtures/empty-model-repo:/models:ro
+    networks:
+      default:
+        ipv4_address: 172.31.77.25
 
   # ------------------------------------------------------------ LISTENER ----
 

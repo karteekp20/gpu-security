@@ -33,7 +33,8 @@ record you need.
 > **What it is:** `ray-guard`, an open-source read-only exposure scanner —
 > https://github.com/karteekp20/gpu-security
 >
-> It makes one TCP connection and at most one HTTP GET request per service to
+> It makes one TCP connection and at most one HTTP GET request per service, plus
+> one control request on a port where a service is identified, to
 > documented health endpoints (e.g. Ray's dashboard on 8265, vLLM's
 > `/v1/models`). It sends no request bodies, uses no method other than GET,
 > and attempts no exploitation. It needs no credentials and installs nothing.
@@ -102,7 +103,10 @@ is written for exactly the person reviewing this.
 
 - **Read-only.** Confirms exposure by observation, never exploitation. It
   proves a door is unlocked by turning the handle, not by walking in.
-- **One TCP connect, and at most one HTTP GET** per service check, to
+- **One TCP connect, and at most one HTTP GET** per service check — plus a
+  single control request to `/ray-guard-probe-404` on a port where a service
+  was identified, which is how a catch-all server is kept from being named as
+  something it is not — to
   documented health/info endpoints. No request body. No method other than GET.
   Probe paths are restricted to a reviewed allowlist enforced in CI; anything
   containing a query string, path traversal, or an execution endpoint fails the

@@ -55,6 +55,11 @@ Fair question, and the honest answer has a caveat in it.
 - One TCP connect and at most one HTTP GET per service check, to documented
   health endpoints. No request body, no method other than GET, no retries
   against a host that responded.
+- One extra GET, only on a port where a service was identified, to
+  `/ray-guard-probe-404` — a path nothing serves. A server that returns 2xx
+  for that returns 2xx for anything, and we refuse to name it. Worth
+  volunteering: *"it sends one request designed to catch us fooling
+  ourselves."*
 - Bounded concurrency and short timeouts: 32 hosts at a time, and every port
   on a host dialled once, concurrently. A /24 of hosts that do not answer is
   bounded by about eight times the probe timeout — roughly 30 seconds at the

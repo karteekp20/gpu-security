@@ -90,7 +90,8 @@ pattern:
 **4. The footer.** Short, and it pre-empts the question they are already
 forming:
 
-> "Read-only. It found all of that with one GET request per service — it
+> "Read-only. It found all of that with one GET request per service, plus one
+> per port designed to catch the tool fooling itself — it
 > never submitted a job, never executed anything, and it doesn't read model
 > weights, prompts, or data. That last part is enforced by a test that blocks
 > our build, not by a policy document."

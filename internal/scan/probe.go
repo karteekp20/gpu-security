@@ -8,8 +8,9 @@
 // OPA/Rego rule library will replace detect.go.
 //
 // Probes are read-only and benign: one GET per check, no request body, to
-// documented health endpoints only. We confirm exposure by observation, never
-// by exploitation.
+// documented health endpoints only, plus one control GET to controlPath on a
+// port where something was identified. We confirm exposure by observation,
+// never by exploitation.
 package scan
 
 import (
@@ -59,6 +60,41 @@ const ServiceBucket = "bucket"
 // nothing into memory that we keep; draining a bounded amount lets the
 // connection be reused and guarantees we never buffer a large body (P3).
 const maxBodyDrain = 2048
+
+// controlPath is a path no real service serves. It is requested only on a
+// port where a service was already identified, to catch servers that answer
+// 2xx to anything: SPA dev servers, catch-all ingress routes, captive
+// portals. Without it, a wildcard server on 8265 is reported as a critical
+// "unauthenticated Ray dashboard", and one on 8000 as vLLM *and* Triton at
+// once - two services on one port, which is impossible and visibly wrong on
+// a customer's report.
+//
+// Real Ray, Jupyter, MLflow, Ollama and TorchServe all answer 404 here
+// (verified against the running containers, not assumed), so the control
+// costs attribution nothing. The path names us on purpose: an operator
+// reading their access log should be able to tell immediately who sent it.
+const controlPath = "/ray-guard-probe-404"
+
+// pathAgnosticServices legitimately answer 2xx on any path, so the wildcard
+// control does not apply to them. Prometheus-style endpoints are the whole
+// category: real Triton's metrics server on 8002 returns 200 for
+// controlPath, which is normal for an exporter and not evidence of a
+// catch-all.
+//
+// This is a deliberate, bounded trade. Applying the control here would mean
+// RG-TRITON-002 could never fire against Triton - a rule that cannot detect
+// the software it is named after is worse than no rule, because it makes the
+// detection table look bigger than it is. Skipping it means a catch-all
+// server on 8002 may be reported as a reachable metrics endpoint: a Low
+// finding whose remediation ("restrict the metrics port to your monitoring
+// network") is sound advice whatever is actually listening. The strong guard
+// stays where misattribution is expensive - the Critical and High service
+// rules.
+var pathAgnosticServices = map[string]bool{
+	"triton-metrics":     true,
+	"torchserve-metrics": true,
+	"dcgm-exporter":      true,
+}
 
 func defaultChecks() []Check {
 	return []Check{
@@ -327,6 +363,15 @@ func (s *Scanner) probeOpenPort(ctx context.Context, host string, port int, chec
 
 	obs = append(obs, tcpOnly...)
 	switch {
+	case len(identified) > 0 && needsWildcardControl(identified) &&
+		s.answersAnything(ctx, host, port, tlsState):
+		// The port answered 2xx on a service's health path - and on a path
+		// that cannot exist. It discriminates nothing, so neither can we.
+		obs = append(obs, domain.Observation{
+			Host: host, Port: port, Service: ServiceUnknown, State: domain.PortOpen,
+			TLS: tlsState, HTTPStatus: identified[0].HTTPStatus, Unauth: true,
+			Note: "answers 2xx on any path, including one that cannot exist; no service could be identified",
+		})
 	case len(identified) > 0:
 		// A 2xx on a service's own health path is what identifies it. On a
 		// shared port (8000) only the real service answers 2xx on its path.
@@ -342,6 +387,31 @@ func (s *Scanner) probeOpenPort(ctx context.Context, host string, port int, chec
 		})
 	}
 	return obs
+}
+
+// needsWildcardControl reports whether any service claimed on this port makes
+// a claim strong enough to be worth a control request. A port where only
+// path-agnostic services matched needs none: a 2xx there proves nothing
+// either way.
+func needsWildcardControl(identified []domain.Observation) bool {
+	for _, o := range identified {
+		if !pathAgnosticServices[o.Service] {
+			return true
+		}
+	}
+	return false
+}
+
+// answersAnything reports whether the port returns 2xx for a path that cannot
+// exist, which means its 2xx on a health path proved nothing. One extra GET,
+// and only on a port where something was already identified.
+//
+// A failed control request counts as "discriminates fine": if we cannot get
+// an answer we keep the attribution we already have, because silently
+// downgrading a real finding is the worse error.
+func (s *Scanner) answersAnything(ctx context.Context, host string, port int, tlsState domain.TLSState) bool {
+	o := s.httpProbe(ctx, host, Check{ServiceUnknown, port, "http", controlPath}, tlsState)
+	return o.Unauth
 }
 
 // handshakeTimeout bounds the TLS handshake separately from the overall probe

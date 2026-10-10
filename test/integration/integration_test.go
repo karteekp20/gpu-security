@@ -31,19 +31,20 @@ import (
 const (
 	subnet = "172.31.77.0/24"
 
-	addrRay      = "172.31.77.10"
-	addrJupyter  = "172.31.77.11"
-	addrMLflow   = "172.31.77.12"
-	addrOllama   = "172.31.77.13"
-	addrVLLM     = "172.31.77.20"
-	addrTriton   = "172.31.77.21"
-	addrTorch    = "172.31.77.22"
-	addrSGLang   = "172.31.77.23"
-	addrDCGM     = "172.31.77.24"
-	addrSlurm    = "172.31.77.30"
-	addrSecured  = "172.31.77.40"
-	addrLoopback = "172.31.77.41"
-	addrTorchTok = "172.31.77.42"
+	addrRay        = "172.31.77.10"
+	addrJupyter    = "172.31.77.11"
+	addrMLflow     = "172.31.77.12"
+	addrOllama     = "172.31.77.13"
+	addrVLLM       = "172.31.77.20"
+	addrTriton     = "172.31.77.21"
+	addrTorch      = "172.31.77.22"
+	addrSGLang     = "172.31.77.23"
+	addrDCGM       = "172.31.77.24"
+	addrSlurm      = "172.31.77.30"
+	addrSecured    = "172.31.77.40"
+	addrLoopback   = "172.31.77.41"
+	addrTorchTok   = "172.31.77.42"
+	addrTritonReal = "172.31.77.25"
 )
 
 const probeTimeout = 5 * time.Second
@@ -180,6 +181,46 @@ func TestRealTorchServeWithTokenAuthIsNotFlagged(t *testing.T) {
 	if findRule(findings, "RG-EXPOSURE-001") == nil {
 		t.Errorf("expected the reachable-but-unidentified ports to be reported at Info; got %v",
 			ruleIDs(findings))
+	}
+}
+
+// TestRealTritonIsDetected runs against real Triton rather than the fixture,
+// and is skipped unless it has been brought up deliberately. Triton's image
+// is 16GB - more than the free disk on a standard GitHub runner - so CI uses
+// the fixture and this is how a human confirms the fixture is faithful:
+//
+//	cd test/integration && docker compose --profile heavy up -d triton-real
+//	go test -tags integration ./test/integration/ -run RealTriton -v
+//
+// It needs no GPU. NVIDIA's quickstart says the same image runs CPU-only;
+// you simply omit --gpus and cannot load GPU-only model configurations,
+// which does not matter to a scanner that never loads a model.
+func TestRealTritonIsDetected(t *testing.T) {
+	hs := scan.New(probeTimeout).ProbeHost(context.Background(), addrTritonReal)
+	if hs.State != domain.HostResponded {
+		t.Skipf("real Triton is not running (%s). Start it with: "+
+			"cd test/integration && docker compose --profile heavy up -d triton-real", addrTritonReal)
+	}
+	findings := scan.Detect(hs.Observations)
+
+	f := findRule(findings, "RG-TRITON-001")
+	if f == nil {
+		t.Fatalf("RG-TRITON-001 did not fire against REAL Triton; got %v", ruleIDs(findings))
+	}
+	if f.Port != 8000 || f.Severity != domain.High {
+		t.Errorf("expected a high finding on 8000, got %s on %d", f.Severity, f.Port)
+	}
+	for _, want := range []string{"RG-TRITON-002", "RG-TRITON-003"} {
+		if findRule(findings, want) == nil {
+			t.Errorf("%s did not fire against real Triton; got %v", want, ruleIDs(findings))
+		}
+	}
+
+	// The shared-port discrimination, against the real thing: Triton and vLLM
+	// both default to 8000, and real Triton 404s /v1/models. If this ever
+	// fires, the fixture-based attribution test is giving false comfort.
+	if findRule(findings, "RG-VLLM-001") != nil {
+		t.Errorf("real Triton was misattributed as vLLM: %v", ruleIDs(findings))
 	}
 }
 

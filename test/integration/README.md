@@ -30,7 +30,7 @@ Coverage is not uniform, and the split is deliberate:
 | Ollama | **Real** | CPU-only; `/api/tags` answers without a model pull |
 | TorchServe | **Real** (`pytorch/torchserve:0.12.0-cpu`, 1.9GB) | The second critical detection. Must be real, for the same reason Ray must be. Runs twice: exposed, and token-protected as a negative control. |
 | vLLM | *Fixture* | GPU-bound image; replays documented `/v1/models` shape |
-| Triton | *Fixture* | GPU-bound, ~15GB image; replays `/v2/health/ready` and `/metrics` |
+| Triton | *Fixture* in CI, **real on demand** | The image runs CPU-only but is 16GB — more than a standard GitHub runner's free disk. The fixture replays `/v2/health/ready` and `/metrics`; `docker compose --profile heavy up -d triton-real` runs the real one on `.25`, and `-run RealTriton` checks it. |
 | SGLang | *Fixture* | GPU-bound image; replays `/get_model_info` on 30000 |
 | dcgm-exporter | *Fixture* | Needs a real GPU to produce metrics; replays `/metrics` on 9400 |
 | Slurm | *Fixture* | `RG-SLURM-001` is reachability-only, so a TCP listener is faithful |
@@ -72,6 +72,19 @@ suite from 28s to 18s and removes a per-port stall from every real scan.
 
 That bug was invisible to mocks. It is the reason this suite exists.
 
+**Triton's metrics server answers 200 on *any* path.** Found by running the
+real thing on the `heavy` profile, and it changed the design. A wildcard
+control probe had just been added — one GET to a path nothing serves, so a
+catch-all server is not reported as whatever orchestrator shares its port —
+and real Triton's 8002 answered 200 to it. Applied naively, that downgraded
+`RG-TRITON-002` to an unidentified-port finding, which would have left a rule
+that cannot detect the software it is named after: worse than no rule, because
+it makes the detection table look bigger than it is. Prometheus-style
+endpoints are exempt from the control for exactly this reason, and the
+exemption is a named list with a test that it only contains real services.
+The fixture answered 404 there, so nothing but the real server could have
+shown this.
+
 **The official `pytorch/torchserve` image binds everything to `0.0.0.0`.** Its
 bundled `config.properties` sets `inference_address`, `management_address`,
 `metrics_address` and both gRPC addresses to `0.0.0.0`. Upstream's security
@@ -93,6 +106,21 @@ by default since 0.12, so `RG-TORCHSERVE-001` can only fire where that was
 switched off or where the build predates it. The remediation now says exactly
 that. The wrong version would have been corrected by the first TorchServe
 operator in the room, on the rule we lead with.
+
+## Running the heavy profile
+
+```bash
+cd test/integration
+docker compose --profile heavy up -d triton-real      # 16GB pull, CPU-only
+RAY_GUARD_INTEGRATION=1 go test -tags integration ./... -run RealTriton -v
+docker compose --profile heavy down -v
+```
+
+It needs no GPU — NVIDIA's quickstart says the same image runs without one;
+you omit `--gpus` and simply cannot load GPU-only model configurations, which
+is irrelevant to a scanner that never loads a model. The test skips with
+instructions if the container is not up, so `make test-integration` is
+unaffected.
 
 ## Local troubleshooting
 

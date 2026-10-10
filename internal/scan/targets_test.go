@@ -149,3 +149,39 @@ func FuzzExpandCIDR(f *testing.F) {
 		}
 	})
 }
+
+// TestExpandCIDRIPv6 pins the v6 rules, which differ from v4 in two ways that
+// are easy to get wrong: there is no network or broadcast address to skip, so
+// a /120 is 256 usable hosts rather than 254; and the width limit is /112
+// rather than /16, because a v6 subnet of the same prefix length is
+// astronomically larger.
+func TestExpandCIDRIPv6(t *testing.T) {
+	hosts, err := ExpandCIDR("fd00::/120", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(hosts) != 256 {
+		t.Errorf("a v6 /120 should expand to 256 hosts (no network/broadcast to skip), got %d", len(hosts))
+	}
+	if hosts[0] != "fd00::" {
+		t.Errorf("the first address of a v6 block is usable; got %q", hosts[0])
+	}
+
+	// /111 is wider than the v6 floor and must be refused without the flag.
+	if _, err := ExpandCIDR("fd00::/111", false); err == nil {
+		t.Error("a /111 should be refused without -allow-large-cidr")
+	}
+	if _, err := ExpandCIDR("fd00::/111", true); err != nil {
+		t.Errorf("-allow-large-cidr should permit a /111: %v", err)
+	}
+
+	// Unmasked input is masked, so a host address inside a block expands to
+	// the block rather than silently scanning from the middle.
+	hosts, err = ExpandCIDR("fd00::ff/126", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(hosts) != 4 || hosts[0] != "fd00::fc" {
+		t.Errorf("expected the masked /126 fd00::fc-ff, got %v", hosts)
+	}
+}
