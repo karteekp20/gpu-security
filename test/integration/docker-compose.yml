@@ -8,16 +8,14 @@
 #
 # Fidelity is mixed, and the split is deliberate rather than convenient:
 #
-#   REAL SERVICES  - ray, jupyter, mlflow, ollama. All run CPU-only, so they
-#                    are the genuine article here.
-#   FIXTURES       - vllm, triton, sglang, dcgm-exporter, torchserve. The
-#                    first four ship GPU-bound, multi-gigabyte images that
-#                    cannot run on a CPU-only host; TorchServe runs on CPU but
-#                    is a multi-gigabyte pull and is unmaintained upstream.
-#                    They are represented by servers replaying the documented
-#                    response shapes of their health endpoints, taken from
-#                    each project's own docs, and are labelled as fixtures in
-#                    the test output so nobody mistakes them for coverage.
+#   REAL SERVICES  - ray, jupyter, mlflow, ollama, torchserve. All run
+#                    CPU-only, so they are the genuine article here.
+#   FIXTURES       - vllm, triton, sglang, dcgm-exporter. All ship GPU-bound
+#                    images that cannot run on a CPU-only host. They are
+#                    represented by servers replaying the documented response
+#                    shapes of their health endpoints, taken from each
+#                    project's own docs, and are labelled as fixtures in the
+#                    test output so nobody mistakes them for coverage.
 #   LISTENER       - slurmctld. RG-SLURM-001 is a reachability-only check, so
 #                    a bare TCP listener is a faithful stand-in, not a
 #                    compromise.
@@ -81,6 +79,34 @@ services:
       default:
         ipv4_address: 172.31.77.13
 
+  # Real TorchServe, carrying the second critical detection
+  # (RG-TORCHSERVE-001 / CVE-2023-43654). ~1.9GB and CPU-only, so there is no
+  # excuse for leaving a Critical rule validated against a mock of our own.
+  #
+  # Note what is NOT configured here. No bind addresses are overridden,
+  # because the official image's bundled config.properties already sets
+  # inference, management, metrics and both gRPC addresses to 0.0.0.0.
+  # Upstream's security page says "these ports are accessible to localhost by
+  # default", which is true of a bare install and not of their own container.
+  # Leaving the override out is deliberate: the stack should demonstrate that,
+  # and fail loudly via wait-ready.sh if a future image changes it.
+  #
+  # The one thing changed is --disable-token-auth. TorchServe has enforced
+  # token authorization by default since 0.12, so without that flag this rule
+  # correctly does not fire - see control-torchserve-auth below, which is that
+  # case. The flag exists because teams do turn it off.
+  #
+  # --model-store is mandatory even with nothing in it.
+  torchserve:
+    image: pytorch/torchserve:0.12.0-cpu
+    command: >
+      torchserve --start --foreground --ncs
+      --disable-token-auth
+      --model-store /home/model-server/model-store
+    networks:
+      default:
+        ipv4_address: 172.31.77.22
+
   # ------------------------------------------------------------ FIXTURES ----
   # GPU-bound images; these replay documented health-endpoint shapes only.
 
@@ -103,16 +129,6 @@ services:
     networks:
       default:
         ipv4_address: 172.31.77.21
-
-  torchserve:
-    image: python:3.11-alpine
-    working_dir: /fixtures
-    volumes:
-      - ./fixtures:/fixtures:ro
-    command: ["python", "/fixtures/shape_server.py", "torchserve"]
-    networks:
-      default:
-        ipv4_address: 172.31.77.22
 
   sglang:
     image: python:3.11-alpine
@@ -163,6 +179,21 @@ services:
     networks:
       default:
         ipv4_address: 172.31.77.40
+
+  # Real TorchServe with its DEFAULT token authorization left on. The
+  # management API is reachable, and RG-TORCHSERVE-001 must NOT fire against
+  # it. Worth having as a real container rather than a stub because TorchServe
+  # answers 400 here, not 401 - a detail no mock of ours would have invented,
+  # and the reason the scan reports this host as an unidentified service at
+  # Info instead of naming it.
+  control-torchserve-auth:
+    image: pytorch/torchserve:0.12.0-cpu
+    command: >
+      torchserve --start --foreground --ncs
+      --model-store /home/model-server/model-store
+    networks:
+      default:
+        ipv4_address: 172.31.77.42
 
   # Bound to loopback inside its own namespace: reachable from nowhere.
   control-loopback:

@@ -43,6 +43,7 @@ const (
 	addrSlurm    = "172.31.77.30"
 	addrSecured  = "172.31.77.40"
 	addrLoopback = "172.31.77.41"
+	addrTorchTok = "172.31.77.42"
 )
 
 const probeTimeout = 5 * time.Second
@@ -53,7 +54,6 @@ const probeTimeout = 5 * time.Second
 var fixtureServices = map[string]string{
 	addrVLLM:   "vLLM (fixture: GPU-only image)",
 	addrTriton: "Triton (fixture: GPU-only image)",
-	addrTorch:  "TorchServe (fixture: unmaintained upstream, multi-GB pull)",
 	addrSGLang: "SGLang (fixture: GPU-only image)",
 	addrDCGM:   "dcgm-exporter (fixture: needs a real GPU)",
 	addrSlurm:  "Slurm (fixture: TCP listener; RG-SLURM-001 is reachability-only)",
@@ -125,6 +125,64 @@ func TestRealRayDashboardIsDetected(t *testing.T) {
 	}
 }
 
+// TestRealTorchServeManagementAPIIsDetected is the second critical rule, and
+// the second one that must not rest on a mock of our own. TorchServe's
+// management API registers a model from any URL the caller names, which is
+// CVE-2023-43654 (ShellTorch); upstream is archived, so there is no patch
+// coming and network isolation is the only durable control.
+func TestRealTorchServeManagementAPIIsDetected(t *testing.T) {
+	findings := scanHost(t, addrTorch)
+
+	f := findRule(findings, "RG-TORCHSERVE-001")
+	if f == nil {
+		t.Fatalf("RG-TORCHSERVE-001 did not fire against REAL TorchServe; got %v", ruleIDs(findings))
+	}
+	if f.Severity != domain.Critical {
+		t.Errorf("an unauthenticated management API must be critical, got %s", f.Severity)
+	}
+	if f.Port != 8081 {
+		t.Errorf("expected the management API on 8081, got %d", f.Port)
+	}
+	if len(f.CVEs) != 1 || f.CVEs[0] != "CVE-2023-43654" {
+		t.Errorf("RG-TORCHSERVE-001 must carry the ShellTorch CVE, got %v", f.CVEs)
+	}
+	// The remediation has to name token authorization, because that is the
+	// actual control and it is on by default upstream. "TorchServe has no
+	// authentication" was wrong and would be corrected in the room.
+	if !strings.Contains(f.Remediation, "token") {
+		t.Errorf("remediation should name token authorization, got %q", f.Remediation)
+	}
+	if findRule(findings, "RG-TORCHSERVE-002") == nil {
+		t.Errorf("expected the metrics port (8082) to be flagged too; got %v", ruleIDs(findings))
+	}
+}
+
+// TestRealTorchServeWithTokenAuthIsNotFlagged is the negative control, and
+// the reason it is a real container rather than a stub: TorchServe answers
+// **400**, not 401, when a token is required. No mock of ours would have
+// invented that, and it decides what the operator sees - an unidentified
+// service at Info rather than a named one. A critical finding here would be
+// a false positive against a correctly configured server.
+func TestRealTorchServeWithTokenAuthIsNotFlagged(t *testing.T) {
+	findings := scanHost(t, addrTorchTok)
+
+	if f := findRule(findings, "RG-TORCHSERVE-001"); f != nil {
+		t.Errorf("FALSE POSITIVE: RG-TORCHSERVE-001 fired against TorchServe with token auth enabled: %+v", f)
+	}
+	for _, f := range findings {
+		if f.Severity == domain.Critical || f.Severity == domain.High {
+			t.Errorf("a token-protected TorchServe produced a %s finding: %s on port %d",
+				f.Severity, f.RuleID, f.Port)
+		}
+	}
+	// It is still reachable, and saying so at Info is correct: something is
+	// listening on 8081 and we could not identify it.
+	if findRule(findings, "RG-EXPOSURE-001") == nil {
+		t.Errorf("expected the reachable-but-unidentified ports to be reported at Info; got %v",
+			ruleIDs(findings))
+	}
+}
+
 // TestRealRayGradesF checks the whole pipeline, not just the rule: a cluster
 // with an exposed Ray dashboard must come out at the bottom of the grading
 // matrix (CLAUDE.md 10.0) with a rationale that names the cause.
@@ -182,7 +240,6 @@ func TestFixtureServicesAreDetected(t *testing.T) {
 	}{
 		{addrVLLM, "RG-VLLM-001"},
 		{addrTriton, "RG-TRITON-001"},
-		{addrTorch, "RG-TORCHSERVE-001"},
 		{addrSGLang, "RG-SGLANG-001"},
 		{addrDCGM, "RG-DCGM-001"},
 		{addrSlurm, "RG-SLURM-001"},

@@ -1,11 +1,10 @@
 """Response-shape fixtures for services that cannot run on a CPU-only host.
 
-vLLM, Triton, SGLang and dcgm-exporter ship GPU-bound images; TorchServe runs
-on CPU but is a multi-gigabyte pull and is no longer maintained upstream.
-Rather than pretend to cover them, this replays the documented shapes of their
-health endpoints and the test output labels them as fixtures. The real
-services in this compose stack (Ray, Jupyter, MLflow, Ollama) are what
-actually validate the probes.
+vLLM, Triton, SGLang and dcgm-exporter ship GPU-bound images that cannot run
+on a CPU-only host. Rather than pretend to cover them, this replays the
+documented shapes of their health endpoints and the test output labels them as
+fixtures. The real services in this compose stack (Ray, Jupyter, MLflow,
+Ollama, TorchServe) are what actually validate the probes.
 
 Ports and paths here come from each project's own documentation - TorchServe's
 configuration reference, SGLang's server arguments, NVIDIA's dcgm-exporter
@@ -35,14 +34,6 @@ TRITON_METRICS = (
     b"# HELP nv_inference_request_success Number of successful requests\n"
     b"# TYPE nv_inference_request_success counter\n"
     b'nv_inference_request_success{model="resnet50",version="1"} 0\n'
-)
-# TorchServe's management API with nothing registered: still 200, which is why
-# reachability alone is the finding (CVE-2023-43654).
-TORCHSERVE_MODELS = b'{"models":[]}'
-TORCHSERVE_METRICS = (
-    b"# HELP MemoryUsed Torchserve prometheus gauge\n"
-    b"# TYPE MemoryUsed gauge\n"
-    b'MemoryUsed{Level="Host",Hostname="torchserve"} 2048.0\n'
 )
 SGLANG_MODEL_INFO = (
     b'{"model_path":"meta-llama/Llama-3-8B","tokenizer_path":'
@@ -122,16 +113,6 @@ def main():
         threads.append((("0.0.0.0", 8002), handler_for(routes_metrics)))
         # Triton's gRPC port: reachable, speaks no HTTP.
         threading.Thread(target=serve_tcp, args=("0.0.0.0", 8001), daemon=True).start()
-
-    elif mode == "torchserve":
-        json_hdr = {"Content-Type": "application/json"}
-        text_hdr = {"Content-Type": "text/plain"}
-        threads.append((("0.0.0.0", 8081), handler_for({"/models": (200, TORCHSERVE_MODELS, json_hdr)})))
-        threads.append((("0.0.0.0", 8082), handler_for({"/metrics": (200, TORCHSERVE_METRICS, text_hdr)})))
-        # 8080 is TorchServe's inference port, served here precisely because
-        # ray-guard refuses to attribute it: the scan must report it as an
-        # unidentified open port (RG-EXPOSURE-001), never as "TorchServe".
-        threads.append((("0.0.0.0", 8080), handler_for({"/ping": (200, b'{"status": "Healthy"}', json_hdr)})))
 
     elif mode == "sglang":
         json_hdr = {"Content-Type": "application/json"}

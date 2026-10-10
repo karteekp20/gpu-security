@@ -22,7 +22,7 @@ Check it worked:
 make demo         # ~15s, writes ./report
 ```
 
-You should get grade **F**, 11 affected hosts, 16 findings, and `RG-RAY-001`
+You should get grade **F**, 12 affected hosts, 19 findings, and `RG-RAY-001`
 at the top of "Fix these first" with `RG-TORCHSERVE-001` second. If you don't,
 fix that before the call rather than improvising in it.
 
@@ -68,13 +68,16 @@ Then point at the second critical, because one example is a bug and two are a
 pattern:
 
 > "And here's the same shape again in a completely different project.
-> TorchServe's management API registers a model from any URL you hand it, and
-> TorchServe ships with no authentication at all — that's CVE-2023-43654,
-> ShellTorch. It's also unmaintained upstream now, so there is no patch
-> coming; the only control is keeping it off the network. This is what we mean
-> by the blind spot: it isn't one CVE, it's that AI infrastructure ships
-> control planes that assume a trusted network and then gets deployed on one
-> that isn't."
+> TorchServe's management API registers a model from any URL you hand it —
+> that's CVE-2023-43654, ShellTorch. TorchServe does enforce a token by
+> default now, and this one has it switched off, which is a flag that exists
+> because teams turn it off. Worth knowing: the official TorchServe container
+> binds inference, management, metrics and both gRPC ports to 0.0.0.0 in its
+> bundled config — their own docs say localhost, which is true of the tarball
+> and not of their image. And upstream is archived, so there's no patch
+> coming; the only durable control is keeping it off the network. That's the
+> blind spot: not one CVE, but AI infrastructure shipping control planes that
+> assume a trusted network and then getting deployed on one that isn't."
 
 **3b. The DCGM finding, if the room is technical.** It is the one that is
 *only* about GPUs:
@@ -97,11 +100,11 @@ forming:
 Say both unprompted. It costs you nothing and buys the credibility you need
 for everything else you claim.
 
-- **"Several of the services in this demo are stand-ins."** vLLM, Triton,
-  SGLang and the DCGM exporter need GPUs, and TorchServe is a multi-gigabyte
-  pull, so those five replay the documented response shapes of their health
-  endpoints. Ray, Jupyter, MLflow and Ollama are the genuine software — and
-  Ray, the one that matters, is real.
+- **"Four of the services in this demo are stand-ins."** vLLM, Triton, SGLang
+  and the DCGM exporter need GPUs, so those four replay the documented
+  response shapes of their health endpoints. Ray, Jupyter, MLflow, Ollama and
+  TorchServe are the genuine software — and both criticals, the two that carry
+  the pitch, fire against the real thing.
 - **"The grades are provisional."** The A+ to F bands aren't validated yet.
   Ask them where they'd move the thresholds — the answer is genuinely useful
   and the question signals you are not selling them a finished opinion.
@@ -119,7 +122,7 @@ with [`authorization.md`](authorization.md) — not with a scan.
 
 - **Compose says "client version is too old"** — your compose plugin predates
   the daemon: `DOCKER_API_VERSION=1.44 make demo-up`.
-- **Fewer than 11 hosts found** — something didn't come up. `make demo-down &&
+- **Fewer than 12 hosts found** — something didn't come up. `make demo-down &&
   make demo-up` and check the output of `wait-ready.sh`.
 - **`N/A — INCONCLUSIVE`, nothing responded** — the stack is gone. Most
   likely you ran `make test-integration` after `make demo-up`: it brings the

@@ -38,12 +38,19 @@ var rules = map[string]ruleDef{
 	"slurmctld": {"RG-SLURM-001", "Slurm controller port reachable", domain.Medium,
 		"Restrict slurmctld (6817) to the cluster management network only.", nil},
 	// Critical for the same reason as Ray: this is not a hardening gap. The
-	// management API registers a model from any URL the caller names and
-	// TorchServe has no native authentication, so reachability is execution.
-	// TorchServe is also no longer actively maintained upstream, which makes
-	// "upgrade" a weaker remediation than "take it off the network".
+	// management API registers a model from any URL the caller names, so
+	// reachability is execution.
+	//
+	// The remediation names token authorization deliberately. TorchServe
+	// enforces it by default (0.12+), and it answers 400 - not 2xx - when a
+	// token is required, so this rule can only fire where it was switched off
+	// with --disable-token-auth or where the build predates it. Saying "it has
+	// no authentication" would be wrong for current versions and corrected by
+	// the first TorchServe operator in the room. Upstream is also archived
+	// ("no planned updates, bug fixes, new features, or security patches"),
+	// which is why network isolation, not a version bump, is the durable fix.
 	"torchserve-mgmt": {"RG-TORCHSERVE-001", "Unauthenticated TorchServe management API exposed", domain.Critical,
-		"Bind the management API (8081) to loopback and put it behind an authenticated proxy; set allowed_urls to the registries you actually use. TorchServe has no native auth and is no longer actively maintained upstream, so network isolation is the control.",
+		"This answered without a token, so token authorization is disabled (--disable-token-auth) or this build predates it: re-enable it, bind the management API (8081) to loopback, and set allowed_urls to the registries you actually use. Note that the official pytorch/torchserve image ships a config.properties binding inference, management, metrics and both gRPC addresses to 0.0.0.0, so a container run from it is exposed on every interface by default. Upstream TorchServe is archived and will get no further security patches, so network isolation is the durable control rather than an upgrade.",
 		[]string{"CVE-2023-43654"}},
 	"torchserve-metrics": {"RG-TORCHSERVE-002", "TorchServe metrics endpoint publicly reachable", domain.Low,
 		"Restrict the metrics port (8082) to your monitoring network.", nil},
