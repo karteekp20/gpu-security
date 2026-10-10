@@ -25,6 +25,8 @@ platform — that is the gate working, not the gate failing.
 
 **0 / 3** buyer-led assessments · **0 / 2** pay-and-name-it intents.
 
+> How to get one: [`assessment/outreach.md`](assessment/outreach.md) — who to
+> contact, what to send, and what never to do.
 > How to run one: [`assessment/`](assessment/) — demo script, scope and
 > authorization template, runbook, and the do-not-claim list.
 
@@ -61,6 +63,11 @@ Beyond the yes/no columns, these are the things that change what gets built:
   objection; note whether the FinOps framing (§14.1 H1) lands.
 
 ## Supporting signal (not part of the gate)
+
+Stars, downloads, outreach volume, reply rates, unattended runs. Worth
+tracking to see your own conversion rate — twenty conversations and zero
+assessments means the *offer* needs changing, not the product — but none of it
+moves the two numbers above.
 
 | Date | Metric | Value |
 | :-- | :-- | :-- |

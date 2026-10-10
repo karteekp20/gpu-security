@@ -8,6 +8,7 @@ Use them in this order:
 
 | | File | When |
 | :-- | :-- | :-- |
+| 0 | [`outreach.md`](outreach.md) | Getting the meeting at all — who to contact, what to send, and what never to do. This is the step the gate is actually blocked on. |
 | 1 | [`demo.md`](demo.md) | First call. Show the tool on a cluster you broke on purpose, before asking for access to theirs. |
 | 2 | [`authorization.md`](authorization.md) | Before any scan of their systems. Written scope, named targets, bounded window. Not optional. |
 | 3 | [`runbook.md`](runbook.md) | The engagement itself — before, during, after. Includes the two gate questions, asked in those words. |
