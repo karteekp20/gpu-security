@@ -141,7 +141,20 @@ malformed certificate.*
 - Redirects are not followed (`CheckRedirect` returns `ErrUseLastResponse`).
 - Every client and dialer carries a timeout; TLS handshake timeout is set.
 - Certificates are parsed by the Go standard library; we extract only a
-  boolean, a failure class, and a date.
+  boolean, a failure class, a protocol version, and a date.
+- **The scanner deliberately negotiates down to TLS 1.0, and deliberately does
+  not verify certificates.** Both read like weakened security and are neither:
+  the probe exists to *measure* someone else's transport posture, and a client
+  that refuses an obsolete handshake cannot see the service behind it or
+  report that the handshake is obsolete (`RG-TLS-003`). Nothing confidential
+  is at stake in either direction - one GET to a health path, no credentials,
+  no request body, and the response is discarded unread. Certificate
+  verification is performed *after* the handshake, by us, so that the failure
+  class can be reported rather than merely acted on. Modern servers still
+  negotiate 1.2/1.3: lowering the floor changes what we can see, not what we
+  accept when better is on offer. SSLv3 and earlier are not supported by Go at
+  all, so a server offering only those is reported as an unidentified open
+  port - the honest ceiling of this check.
 - No response content is ever rendered into the HTML report, so there is no
   path to inject markup into the report a buyer opens. Everything that *is*
   rendered goes through `html/template` auto-escaping.

@@ -51,6 +51,18 @@ type TLSState struct {
 	Issue string `json:"issue,omitempty"`
 	// NotAfter is a date (YYYY-MM-DD), not a timestamp - coarse on purpose.
 	NotAfter string `json:"not_after,omitempty"`
+	// Version is the negotiated protocol version ("1.0" ... "1.3"), which is
+	// posture rather than content. It is recorded because obsolete versions
+	// are a finding in their own right, and because a scanner that cannot
+	// speak to them cannot see what is behind them either.
+	Version string `json:"version,omitempty"`
+}
+
+// ObsoleteTLS reports whether the negotiated version is below TLS 1.2, the
+// floor every current compliance baseline expects (and the floor Go's own
+// clients default to).
+func (t TLSState) ObsoleteTLS() bool {
+	return t.Version == "1.0" || t.Version == "1.1"
 }
 
 // HostState records whether we actually learned anything about a host.

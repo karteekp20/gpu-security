@@ -25,6 +25,7 @@ moves; otherwise this is the record.
 | Threat model read as an outsider | `docs/threat-model.md` | T6 corrected — see below |
 | Action pins match their comments | GitHub tag API, all 7 pins | OK — every SHA is the commit its `# vX.Y.Z` comment names |
 | Threat-model claims traced to code | T1–T7 | T4 corrected (the coverage list is capped at 10, not "every target"); the rest hold — path allowlist, CIDR hard ceiling `1<<18`, `html/template`, no-redirect, `gosec` enabled, `pull_request` trigger |
+| **TLS floor** | unit: server capped at TLS 1.0/1.1; integration: real nginx | service still identified behind 1.0/1.1 with `RG-TLS-003`; nginx negotiates 1.2/1.3 with no version finding |
 | **Low descriptor limit** | `bash -c 'ulimit -Sn 128; ulimit -Hn 128; ray-guard -cidr <demo>/24'` | F with 19 findings, 0 probe errors, 4m1s (clamped to 2 hosts at a time). Before the clamp the same run graded **C with 3 findings** — re-run this if `MaxHostConcurrency` or the check set changes |
 | **Ctrl-C mid-scan** | `kill -INT` against a running `-cidr` sweep | exit **130**, report written, `interrupted: true`, "0 of 254 targets were probed", nothing recorded as unreachable. Checked by hand because the signal path itself cannot be tested without a timing-dependent test; re-run it if `cmd/ray-guard` changes |
 | Release instructions are runnable | `.github/workflows/release.yml` vs `SECURITY.md` | `.sig`/`.pem` names, upload globs, `cd bin && sha256sum -c` paths and `VERSION=` override all line up |

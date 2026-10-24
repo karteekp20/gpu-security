@@ -2,6 +2,7 @@ package scan
 
 import (
 	"context"
+	"crypto/tls"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -184,8 +185,16 @@ func TestTLSProbeRecordsNoCertificateIdentity(t *testing.T) {
 	port, _ := strconv.Atoi(portStr)
 
 	state, _ := NewWithChecks(3*time.Second, nil).tlsProbe(context.Background(), host, port)
+	// Version is included here on purpose: it is the newest field on TLSState,
+	// and every field that crosses the boundary has to be checkable as posture
+	// rather than identity.
+	switch state.Version {
+	case "1.0", "1.1", "1.2", "1.3", "":
+	default:
+		t.Errorf("TLS version recorded as %q, which is not a protocol version", state.Version)
+	}
 	for _, leaked := range []string{"CN=", "O=", "Acme"} {
-		if strings.Contains(state.Issue+state.NotAfter, leaked) {
+		if strings.Contains(state.Issue+state.NotAfter+state.Version, leaked) {
 			t.Errorf("TLS state leaked certificate identity (%q)", leaked)
 		}
 	}
@@ -860,5 +869,110 @@ func TestProbeHostUnderDescriptorExhaustion(t *testing.T) {
 	if healthy.State != domain.HostResponded {
 		t.Errorf("state = %s with descriptors available, want %s (a refused port is an answer)",
 			healthy.State, domain.HostResponded)
+	}
+}
+
+// serveTLSCapped starts an HTTPS server that will negotiate no higher than
+// maxVersion, which is how a TLS-terminating proxy with an old configuration
+// behaves.
+func serveTLSCapped(t *testing.T, maxVersion uint16, h http.HandlerFunc) (string, int) {
+	t.Helper()
+	srv := httptest.NewUnstartedServer(discriminating(h))
+	srv.TLS = &tls.Config{MaxVersion: maxVersion, MinVersion: tls.VersionTLS10}
+	srv.StartTLS()
+	t.Cleanup(srv.Close)
+	host, portStr, err := net.SplitHostPort(srv.Listener.Addr().String())
+	if err != nil {
+		t.Fatalf("splitting test server address: %v", err)
+	}
+	port, _ := strconv.Atoi(portStr)
+	return host, port
+}
+
+// TestProbeSeesServiceBehindObsoleteTLS is the blind spot this floor exists to
+// close. Go's client refuses TLS 1.0/1.1 by default, which is correct for a
+// client protecting its own traffic and wrong for a scanner: the handshake
+// fails, the port is concluded not to speak TLS, the plaintext GET gets
+// nothing, and an unauthenticated Ray dashboard behind an old terminating
+// proxy is reported as an unidentified open port at Info. Measured before the
+// fix, not assumed.
+func TestProbeSeesServiceBehindObsoleteTLS(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		max     uint16
+		wantVer string
+	}{
+		{"TLS 1.0", tls.VersionTLS10, "1.0"},
+		{"TLS 1.1", tls.VersionTLS11, "1.1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			host, port := serveTLSCapped(t, tc.max, func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			})
+			obs := probeOne(t, host, []Check{{"ray-dashboard", port, "http", "/"}})
+
+			var service, transport *domain.Observation
+			for i := range obs {
+				switch obs[i].Service {
+				case "ray-dashboard":
+					service = &obs[i]
+				case ServiceTLS:
+					transport = &obs[i]
+				}
+			}
+			if service == nil || !service.Unauth {
+				t.Fatalf("the service behind %s was not identified: %+v", tc.name, obs)
+			}
+			if !service.TLS.Enabled {
+				t.Error("the service was reported as plaintext; it is TLS, just old TLS")
+			}
+			if service.TLS.Version != tc.wantVer {
+				t.Errorf("negotiated version recorded as %q, want %q", service.TLS.Version, tc.wantVer)
+			}
+			if transport == nil {
+				t.Fatal("no transport observation, so RG-TLS-003 cannot fire")
+			}
+			findings := Detect(obs)
+			var sawObsolete bool
+			for _, f := range findings {
+				if f.RuleID == "RG-TLS-003" {
+					sawObsolete = true
+					if !strings.Contains(f.Detail, tc.wantVer) {
+						t.Errorf("the finding does not name the version: %q", f.Detail)
+					}
+				}
+				if f.RuleID == "RG-EXPOSURE-001" {
+					t.Errorf("the port was reported as unidentified: %q", f.Detail)
+				}
+			}
+			if !sawObsolete {
+				t.Errorf("RG-TLS-003 did not fire against %s: %+v", tc.name, findings)
+			}
+		})
+	}
+}
+
+// TestModernTLSStillNegotiatesHigh: lowering the floor must not drag modern
+// services down with it. Negotiation picks the highest both sides support.
+func TestModernTLSStillNegotiatesHigh(t *testing.T) {
+	host, port := serveTLSCapped(t, tls.VersionTLS13, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	obs := probeOne(t, host, []Check{{"ray-dashboard", port, "http", "/"}})
+	for _, o := range obs {
+		if o.Service != "ray-dashboard" {
+			continue
+		}
+		if o.TLS.Version != "1.3" {
+			t.Errorf("negotiated TLS %q against a 1.3-capable server, want 1.3", o.TLS.Version)
+		}
+		if o.TLS.ObsoleteTLS() {
+			t.Error("a 1.3 handshake was classified as obsolete")
+		}
+	}
+	for _, f := range Detect(obs) {
+		if f.RuleID == "RG-TLS-003" {
+			t.Errorf("RG-TLS-003 fired against modern TLS: %q", f.Detail)
+		}
 	}
 }

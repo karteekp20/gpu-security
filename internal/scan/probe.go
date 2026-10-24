@@ -253,7 +253,10 @@ func NewWithChecks(timeout time.Duration, checks []Check) *Scanner {
 		return &http.Client{
 			Timeout: timeout,
 			Transport: &http.Transport{
-				TLSClientConfig:     &tls.Config{InsecureSkipVerify: skipVerify},
+				// #nosec G402 -- MinVersion is deliberately at the floor: see
+				// scanTLSFloor. We are measuring other people's transport
+				// posture, not protecting our own traffic.
+				TLSClientConfig:     &tls.Config{InsecureSkipVerify: skipVerify, MinVersion: scanTLSFloor},
 				DisableKeepAlives:   true,
 				TLSHandshakeTimeout: timeout,
 			},
@@ -440,7 +443,7 @@ func (s *Scanner) probeOpenPort(ctx context.Context, host string, port int, chec
 	var obs []domain.Observation
 	probeErrors := 0
 
-	if tlsState.Enabled && tlsState.Issue != "" {
+	if tlsState.Enabled && (tlsState.Issue != "" || tlsState.ObsoleteTLS()) {
 		obs = append(obs, domain.Observation{
 			Host: host, Port: port, Service: ServiceTLS, State: domain.PortOpen,
 			TLS: tlsState, Note: tlsState.Issue,
@@ -542,6 +545,45 @@ func (s *Scanner) answersAnything(ctx context.Context, host string, port int, tl
 	return o.Unauth
 }
 
+// scanTLSFloor is the lowest TLS version the scanner will negotiate, and it is
+// deliberately lower than any version we would accept for our own traffic.
+//
+// Go's client default is TLS 1.2, which is right for a client protecting its
+// own data and wrong for a scanner: measured against a server capped at TLS
+// 1.0, the handshake fails, tlsProbe concludes "not TLS", the HTTP probe then
+// speaks plaintext to a TLS port and gets nothing, and an unauthenticated Ray
+// dashboard behind an old TLS-terminating proxy is reported as an unidentified
+// open port at Info. The obsolete version - a finding in itself - is invisible
+// for the same reason.
+//
+// Lowering the floor costs nothing on modern services: negotiation still
+// settles on the highest version both sides support (verified: a TLS 1.3
+// server still negotiates 1.3). Nothing secret is sent either way - one GET to
+// a health path, no credentials, no body.
+//
+// SSLv3 and older are not supported by Go at all, so a server offering only
+// those is still reported as an unidentified open port. That is the honest
+// ceiling of this check.
+const scanTLSFloor = tls.VersionTLS10
+
+// tlsVersionName maps the negotiated version to the string the report uses.
+// An unknown future version is recorded as "" rather than guessed at: a wrong
+// version on a report is worse than a missing one.
+func tlsVersionName(v uint16) string {
+	switch v {
+	case tls.VersionTLS10:
+		return "1.0"
+	case tls.VersionTLS11:
+		return "1.1"
+	case tls.VersionTLS12:
+		return "1.2"
+	case tls.VersionTLS13:
+		return "1.3"
+	default:
+		return ""
+	}
+}
+
 // handshakeTimeout bounds the TLS handshake separately from the overall probe
 // timeout.
 //
@@ -577,18 +619,23 @@ func (s *Scanner) handshakeTimeout() time.Duration {
 // to the scanner, in which case the result says nothing about the port.
 func (s *Scanner) tlsProbe(ctx context.Context, host string, port int) (domain.TLSState, bool) {
 	d := &net.Dialer{Timeout: s.handshakeTimeout()}
+	// #nosec G402 -- see scanTLSFloor: a scanner that refuses obsolete TLS
+	// cannot see what is behind it, and cannot report that it is obsolete.
 	conn, err := tls.DialWithDialer(d, "tcp", net.JoinHostPort(host, strconv.Itoa(port)),
-		&tls.Config{InsecureSkipVerify: true})
+		&tls.Config{InsecureSkipVerify: true, MinVersion: scanTLSFloor})
 	if err != nil {
 		return domain.TLSState{Enabled: false}, localResourceError(err)
 	}
 	defer func() { _ = conn.Close() }()
-	certs := conn.ConnectionState().PeerCertificates
+	cs := conn.ConnectionState()
+	version := tlsVersionName(cs.Version)
+	certs := cs.PeerCertificates
 	if len(certs) == 0 {
-		return domain.TLSState{Enabled: true}, false
+		return domain.TLSState{Enabled: true, Version: version}, false
 	}
 	leaf := certs[0]
-	state := domain.TLSState{Enabled: true, NotAfter: leaf.NotAfter.UTC().Format("2006-01-02")}
+	state := domain.TLSState{Enabled: true, Version: version,
+		NotAfter: leaf.NotAfter.UTC().Format("2006-01-02")}
 
 	roots, err := x509.SystemCertPool()
 	if err != nil {

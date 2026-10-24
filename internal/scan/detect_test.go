@@ -227,3 +227,51 @@ func TestPort8080IsProbedButNeverAttributed(t *testing.T) {
 		t.Errorf("expected one Info RG-EXPOSURE-001 for an unidentified 8080, got %+v", f)
 	}
 }
+
+// TestTLSCertificateAndVersionAreSeparateFindings. They have different fixes -
+// replace the certificate, disable the protocol - and they travel together in
+// the field, so collapsing them to one finding means the operator fixes the
+// certificate, re-scans, and only then hears about TLS 1.0.
+func TestTLSCertificateAndVersionAreSeparateFindings(t *testing.T) {
+	obs := []domain.Observation{{
+		Host: "10.0.0.5", Port: 8443, Service: ServiceTLS, State: domain.PortOpen,
+		TLS: domain.TLSState{Enabled: true, Issue: "self-signed", NotAfter: "2027-01-01", Version: "1.0"},
+	}}
+	got := map[string]string{}
+	for _, f := range Detect(obs) {
+		got[f.RuleID] = f.Detail
+	}
+	if _, ok := got["RG-TLS-001"]; !ok {
+		t.Error("the certificate problem was not reported")
+	}
+	if detail, ok := got["RG-TLS-003"]; !ok {
+		t.Error("the obsolete protocol version was not reported")
+	} else if !strings.Contains(detail, "1.0") || !strings.Contains(detail, "RFC 8996") {
+		t.Errorf("the version finding does not say what is wrong: %q", detail)
+	}
+}
+
+func TestModernTLSRaisesNoTransportFinding(t *testing.T) {
+	for _, v := range []string{"1.2", "1.3"} {
+		obs := []domain.Observation{{
+			Host: "10.0.0.5", Port: 8443, Service: ServiceTLS, State: domain.PortOpen,
+			TLS: domain.TLSState{Enabled: true, Version: v},
+		}}
+		if got := Detect(obs); len(got) != 0 {
+			t.Errorf("TLS %s raised %d finding(s): %+v", v, len(got), got)
+		}
+	}
+}
+
+// TestUnknownTLSVersionIsNotGuessedAt: a version we cannot name must not be
+// called obsolete. A wrong TLS finding on a buyer's report is expensive, and a
+// future TLS 1.4 would otherwise be reported as deprecated.
+func TestUnknownTLSVersionIsNotGuessedAt(t *testing.T) {
+	obs := []domain.Observation{{
+		Host: "10.0.0.5", Port: 8443, Service: ServiceTLS, State: domain.PortOpen,
+		TLS: domain.TLSState{Enabled: true, Version: ""},
+	}}
+	if got := Detect(obs); len(got) != 0 {
+		t.Errorf("an unrecognized version raised %d finding(s): %+v", len(got), got)
+	}
+}

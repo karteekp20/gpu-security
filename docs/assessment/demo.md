@@ -22,9 +22,10 @@ Check it worked:
 make demo         # ~15s, writes ./report
 ```
 
-You should get grade **F**, 12 affected hosts, 19 findings, and `RG-RAY-001`
-at the top of "Fix these first" with `RG-TORCHSERVE-001` second. If you don't,
-fix that before the call rather than improvising in it.
+You should get grade **F**, 13 affected hosts, 21 findings, and `RG-RAY-001`
+at the top of "Fix these first" with `RG-TORCHSERVE-001` second and a second
+`RG-RAY-001` third - that one is the TLS-fronted dashboard (see below). If you
+don't, fix that before the call rather than improvising in it.
 
 Have `./report/report.html` open in a browser tab, ready.
 
@@ -32,8 +33,9 @@ Have `./report/report.html` open in a browser tab, ready.
 
 > "This is a small GPU cluster I've configured the way a lot of them
 > accidentally are. Nothing exotic — Ray, vLLM, Triton, TorchServe, SGLang,
-> Jupyter, MLflow, Ollama, and the GPU exporter every node runs. I'll scan the
-> subnet; I haven't told the tool what's on it."
+> Jupyter, MLflow, Ollama, the GPU exporter every node runs, and one service
+> behind an HTTPS proxy. I'll scan the subnet; I haven't told the tool what's
+> on it."
 
 ```bash
 make demo
@@ -63,6 +65,16 @@ where you say the thing that separates you from a port scanner:
 > found exposed clusters by internet-wide scanning and used them to mine
 > crypto and steal credentials. Nobody targeted those companies. They were
 > just reachable."
+
+**The third critical is the same Ray dashboard behind HTTPS** (`172.31.77.50`),
+and it is worth thirty seconds because it is the half-measure everybody has
+tried:
+
+> "This host is the same dashboard behind a TLS proxy. Encryption doesn't
+> authenticate anybody — it's still remote code execution, just encrypted in
+> transit. The scanner goes through the handshake, so a reverse proxy doesn't
+> hide it. And it picked up the self-signed certificate on the way through,
+> which is a separate, much smaller finding."
 
 Then point at the second critical, because one example is a bug and two are a
 pattern:
@@ -123,7 +135,7 @@ with [`authorization.md`](authorization.md) — not with a scan.
 
 - **Compose says "client version is too old"** — your compose plugin predates
   the daemon: `DOCKER_API_VERSION=1.44 make demo-up`.
-- **Fewer than 12 hosts found** — something didn't come up. `make demo-down &&
+- **Fewer than 13 hosts found** — something didn't come up. `make demo-down &&
   make demo-up` and check the output of `wait-ready.sh`.
 - **`N/A — INCONCLUSIVE`, nothing responded** — the stack is gone. Most
   likely you ran `make test-integration` after `make demo-up`: it brings the

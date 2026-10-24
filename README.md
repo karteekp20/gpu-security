@@ -153,6 +153,7 @@ only one of them is true.
 | `RG-BUCKET-001` | Object storage lists publicly | high |
 | `RG-TLS-001` | Certificate fails verification (self-signed / expired / mismatched) | medium |
 | `RG-TLS-002` | Authenticated service served over plaintext HTTP | medium |
+| `RG-TLS-003` | Obsolete TLS version negotiated (1.0 / 1.1, RFC 8996) | medium |
 | `RG-EXPOSURE-001` | Open port on an AI-infrastructure port, service unidentified | info |
 
 Port 8080 is swept but **never attributed**. TorchServe's inference API, TGI, LocalAI and most

@@ -8,8 +8,9 @@
 #
 # Fidelity is mixed, and the split is deliberate rather than convenient:
 #
-#   REAL SERVICES  - ray, jupyter, mlflow, ollama, torchserve. All run
-#                    CPU-only, so they are the genuine article here.
+#   REAL SERVICES  - ray, jupyter, mlflow, ollama, torchserve, and an nginx
+#                    TLS proxy in front of Ray. All run CPU-only, so they are
+#                    the genuine article here.
 #   FIXTURES       - vllm, triton, sglang, dcgm-exporter. vLLM, SGLang and
 #                    DCGM ship GPU-bound images; Triton's runs CPU-only but
 #                    is 16GB, so the real one lives in the `heavy` profile
@@ -108,6 +109,24 @@ services:
     networks:
       default:
         ipv4_address: 172.31.77.22
+
+  # Real nginx terminating TLS with a real self-signed certificate, in front
+  # of the real Ray dashboard. The point is the combination: the same exposure
+  # seen through HTTPS rather than through our own Go TLS test server, which
+  # is the only place TLS detection had ever been exercised.
+  #
+  # The certificate is generated at test time (fixtures/gencert) so no private
+  # key lives in this repository.
+  tls-proxy:
+    image: nginx:alpine
+    volumes:
+      - ./fixtures/tls-proxy.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./fixtures/tls:/certs:ro
+    depends_on:
+      - ray
+    networks:
+      default:
+        ipv4_address: 172.31.77.50
 
   # ------------------------------------------------------------ FIXTURES ----
   # GPU-bound images; these replay documented health-endpoint shapes only.

@@ -8,7 +8,7 @@ PLATFORMS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64
 # security lead who will run it once, in 60 seconds (CLAUDE.md P4, 15).
 GOFLAGS_STATIC := CGO_ENABLED=0
 
-.PHONY: build build-all test test-p3 test-integration fuzz demo demo-up demo-down lint fmt run report-pdf sbom airgap-bundle clean
+.PHONY: build build-all test test-p3 test-integration tls-fixture fuzz demo demo-up demo-down lint fmt run report-pdf sbom airgap-bundle clean
 
 # The demo subnet is pinned in test/integration/docker-compose.yml.
 DEMO_SUBNET := 172.31.77.0/24
@@ -45,7 +45,7 @@ fuzz:
 ## test-integration: run the detections against REAL services in docker.
 ## Unit tests only prove our logic agrees with our own mocks; this proves
 ## RG-RAY-001 fires against actual Ray. Heavy images - not part of `make test`.
-test-integration:
+test-integration: tls-fixture
 	@cd test/integration && \
 	if ! docker compose version >/dev/null 2>&1; then \
 		echo "docker compose unavailable."; \
@@ -60,10 +60,16 @@ test-integration:
 	./wait-ready.sh && \
 	RAY_GUARD_INTEGRATION=1 go test -tags=integration -count=1 -v ./...
 
+## tls-fixture: generate the self-signed cert the TLS proxy serves. Generated
+## rather than committed: no private key belongs in this repository, however
+## harmless (docs/decision-log.md).
+tls-fixture:
+	@go run ./test/integration/fixtures/gencert test/integration/fixtures/tls 172.31.77.50 >/dev/null
+
 ## demo-up: start the deliberately-insecure cluster used for live demos.
 ## Run this BEFORE a call - Ray takes 30-60s to bind its dashboard, and that
 ## is not silence you want on a screenshare. See docs/assessment/demo.md.
-demo-up:
+demo-up: tls-fixture
 	@cd test/integration && \
 	if ! docker compose version >/dev/null 2>&1; then \
 		echo "docker compose unavailable. If it reports 'client version is too old',"; \

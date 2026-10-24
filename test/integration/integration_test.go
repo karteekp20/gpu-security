@@ -45,6 +45,7 @@ const (
 	addrLoopback   = "172.31.77.41"
 	addrTorchTok   = "172.31.77.42"
 	addrTritonReal = "172.31.77.25"
+	addrTLSProxy   = "172.31.77.50"
 )
 
 const probeTimeout = 5 * time.Second
@@ -521,5 +522,67 @@ func TestComposeStackIsUp(t *testing.T) {
 	running := strings.Fields(string(out))
 	if len(running) < 6 {
 		t.Fatalf("expected the full stack to be running, got %d services: %v", len(running), running)
+	}
+}
+
+// TestServiceBehindRealTLSIsStillDetected is the TLS path against real
+// software. Until now every TLS test ran against Go's own httptest server, and
+// the lesson of this suite is that our mocks agree with us: real Jupyter's
+// accept-and-hang and real Triton's blanket-200 metrics endpoint were both
+// found this way, not by unit tests.
+//
+// The scenario is the common half-measure: TLS terminated in front of an
+// orchestrator that is still unauthenticated behind it. Both facts must be
+// reported - the exposure, through the handshake, and the certificate.
+func TestServiceBehindRealTLSIsStillDetected(t *testing.T) {
+	obs := scan.New(probeTimeout).ProbeHost(context.Background(), addrTLSProxy).Observations
+
+	var service, transport *domain.Observation
+	for i := range obs {
+		switch obs[i].Service {
+		case "ray-dashboard":
+			service = &obs[i]
+		case scan.ServiceTLS:
+			transport = &obs[i]
+		}
+	}
+	if service == nil {
+		t.Fatalf("the Ray dashboard behind real nginx TLS was not identified: %+v", obs)
+	}
+	if !service.Unauth {
+		t.Error("the dashboard was reached but not reported as unauthenticated")
+	}
+	if !service.TLS.Enabled {
+		t.Error("the service was reported as plaintext; nginx terminated TLS here")
+	}
+	// nginx negotiates the best both sides support, so this must not be an
+	// obsolete version - the floor the scanner accepts is for seeing old
+	// servers, not for dragging modern ones down.
+	if service.TLS.Version != "1.2" && service.TLS.Version != "1.3" {
+		t.Errorf("negotiated TLS %q against nginx, want 1.2 or 1.3", service.TLS.Version)
+	}
+	if transport == nil || transport.TLS.Issue != "self-signed" {
+		t.Errorf("the self-signed certificate was not classified: %+v", transport)
+	}
+
+	findings := scanHost(t, addrTLSProxy)
+	for _, want := range []string{"RG-RAY-001", "RG-TLS-001"} {
+		if findRule(findings, want) == nil {
+			t.Errorf("%s did not fire against the TLS-fronted dashboard; got %v", want, ruleIDs(findings))
+		}
+	}
+	// TLS does not make the exposure less critical, and the grade must say so.
+	r := domain.NewScanResult(time.Now().Add(-time.Second), time.Now(),
+		[]domain.HostSummary{{Host: addrTLSProxy, State: domain.HostResponded}}, findings)
+	if r.Grade != "F" {
+		t.Errorf("grade = %s, want F: an unauthenticated Ray dashboard behind TLS is still RCE", r.Grade)
+	}
+	for _, f := range findings {
+		if f.RuleID == "RG-TLS-003" {
+			t.Errorf("RG-TLS-003 fired against nginx's modern TLS: %q", f.Detail)
+		}
+		if f.RuleID == "RG-TLS-002" {
+			t.Errorf("RG-TLS-002 (plaintext) fired against a TLS listener: %q", f.Detail)
+		}
 	}
 }

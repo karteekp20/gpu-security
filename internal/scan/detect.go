@@ -71,6 +71,13 @@ var (
 		"Replace the certificate with one issued by a trusted CA, matching the service hostname and within its validity window.", nil}
 	ruleTLSPlaintext = ruleDef{"RG-TLS-002", "Authenticated service served over plaintext HTTP", domain.Medium,
 		"Terminate TLS in front of this service; credentials sent to it currently traverse the network in the clear.", nil}
+	// Medium for the same reason as a bad certificate: the traffic is not
+	// meaningfully protected. TLS 1.0/1.1 have been deprecated since RFC 8996
+	// and are below the floor every current baseline sets, which also makes
+	// this the TLS finding most likely to be raised by the customer's own
+	// auditor if we miss it.
+	ruleTLSObsolete = ruleDef{"RG-TLS-003", "Obsolete TLS version negotiated", domain.Medium,
+		"Disable TLS 1.0 and 1.1 on this listener and require TLS 1.2 or later (RFC 8996); on a terminating proxy this is one directive.", nil}
 	ruleBucketPublic = ruleDef{"RG-BUCKET-001", "Object storage bucket lists publicly", domain.High,
 		"Remove public-read/list permissions from the bucket and require authenticated access.", nil}
 	ruleUnknownExposure = ruleDef{"RG-EXPOSURE-001", "Unidentified service reachable on an AI-infrastructure port", domain.Info,
@@ -82,49 +89,62 @@ var (
 func Detect(obs []domain.Observation) []domain.Finding {
 	var findings []domain.Finding
 	for _, o := range obs {
-		if f, ok := detectOne(o); ok {
-			findings = append(findings, f)
-		}
+		findings = append(findings, detectOne(o)...)
 	}
 	return domain.SortFindings(findings)
 }
 
-func detectOne(o domain.Observation) (domain.Finding, bool) {
+// detectOne returns every finding an observation raises. Transport is the one
+// case that can raise more than one: a bad certificate and an obsolete
+// protocol version are separate problems with separate fixes, and they travel
+// together in the field - the box with TLS 1.0 on it usually has a
+// self-signed certificate too. Reporting only the certificate would mean the
+// operator fixes it, re-scans, and only then learns about the protocol.
+func detectOne(o domain.Observation) []domain.Finding {
 	switch o.Service {
 	case ServiceTLS:
-		if o.TLS.Issue == "" {
-			return domain.Finding{}, false
+		var out []domain.Finding
+		if o.TLS.Issue != "" {
+			detail := fmt.Sprintf("Certificate on port %d is %s", o.Port, o.TLS.Issue)
+			if o.TLS.NotAfter != "" {
+				detail += fmt.Sprintf(" (expires %s)", o.TLS.NotAfter)
+			}
+			if o.TLS.Version != "" {
+				detail += fmt.Sprintf(", TLS %s", o.TLS.Version)
+			}
+			out = append(out, mkFinding(ruleTLSInvalid, o, detail))
 		}
-		detail := fmt.Sprintf("Certificate on port %d is %s", o.Port, o.TLS.Issue)
-		if o.TLS.NotAfter != "" {
-			detail += fmt.Sprintf(" (expires %s)", o.TLS.NotAfter)
+		if o.TLS.ObsoleteTLS() {
+			out = append(out, mkFinding(ruleTLSObsolete, o,
+				fmt.Sprintf("Port %d negotiated TLS %s, which is deprecated (RFC 8996)",
+					o.Port, o.TLS.Version)))
 		}
-		return mkFinding(ruleTLSInvalid, o, detail), true
+		return out
 
 	case ServiceBucket:
 		if !o.Unauth {
-			return domain.Finding{}, false
+			return nil
 		}
-		return mkFinding(ruleBucketPublic, o,
+		return one(mkFinding(ruleBucketPublic, o,
 			fmt.Sprintf("Unauthenticated request to the bucket endpoint returned HTTP %d. "+
-				"Listing was not read - the status alone shows it is public.", o.HTTPStatus)), true
+				"Listing was not read - the status alone shows it is public.", o.HTTPStatus)))
 
 	case ServiceUnknown:
 		detail := fmt.Sprintf("Port %d is open but no probe identified the service", o.Port)
 		if o.HTTPStatus > 0 {
 			detail += fmt.Sprintf(" (HTTP %d)", o.HTTPStatus)
 		}
-		return mkFinding(ruleUnknownExposure, o, detail), true
+		return one(mkFinding(ruleUnknownExposure, o, detail))
 	}
 
 	r, ok := rules[o.Service]
 	if !ok {
-		return domain.Finding{}, false
+		return nil
 	}
 
 	// A reachability-only (TCP) check: no HTTP response to reason about.
 	if o.HTTPStatus == 0 {
-		return mkFinding(r, o, fmt.Sprintf("Port %d is reachable (%s)", o.Port, o.Note)), true
+		return one(mkFinding(r, o, fmt.Sprintf("Port %d is reachable (%s)", o.Port, o.Note)))
 	}
 
 	if o.Unauth {
@@ -133,17 +153,19 @@ func detectOne(o domain.Observation) (domain.Finding, bool) {
 		if !o.TLS.Enabled {
 			f.Detail += " (no TLS)"
 		}
-		return f, true
+		return one(f)
 	}
 
 	// Auth is enforced, but credentials cross the wire in plaintext.
 	if (o.HTTPStatus == http.StatusUnauthorized || o.HTTPStatus == http.StatusForbidden) && !o.TLS.Enabled {
-		return mkFinding(ruleTLSPlaintext, o,
-			fmt.Sprintf("%s on port %d requires authentication but is served over plaintext HTTP", o.Service, o.Port)), true
+		return one(mkFinding(ruleTLSPlaintext, o,
+			fmt.Sprintf("%s on port %d requires authentication but is served over plaintext HTTP", o.Service, o.Port)))
 	}
 
-	return domain.Finding{}, false
+	return nil
 }
+
+func one(f domain.Finding) []domain.Finding { return []domain.Finding{f} }
 
 func mkFinding(r ruleDef, o domain.Observation, detail string) domain.Finding {
 	return domain.Finding{
