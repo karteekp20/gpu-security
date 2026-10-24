@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -19,7 +20,8 @@ import (
 
 // Exit codes. 0 = clean, 1 = runtime error, 2 = usage error; 3-6 encode the
 // worst severity observed so a tenant can gate their own CI on the result;
-// 7 = inconclusive, meaning no target responded and nothing was verified.
+// 7 = inconclusive, meaning no target responded and nothing was verified;
+// 130 = interrupted before the scan finished (domain.ExitInterrupted).
 const (
 	exitRuntimeError = 1
 	exitUsageError   = 2
@@ -93,11 +95,24 @@ func run() int {
 	start := time.Now()
 
 	scanner := scan.NewWithChecks(*timeout, checks)
-	ctx := context.Background()
-	observations, hosts := probeAll(ctx, scanner, targets, buckets, *concurrency)
+	ctx, stopSignals := interruptible()
+	defer stopSignals()
+	observations, hosts, interrupted := probeAll(ctx, scanner, targets, buckets, *concurrency)
 
 	findings := scan.Detect(observations)
-	result := domain.NewScanResult(start, time.Now(), hosts, findings)
+	requested := len(targets) + len(buckets)
+	// Deliberately not clever: a signal is taken at face value even when every
+	// target happens to have been recorded anyway. "All hosts recorded" is not
+	// proof of coverage - a host counts as responded as soon as one port
+	// answers, so the last host probed may have had ports cut short. Trading a
+	// withheld grade on a scan that finished in the same instant for a
+	// possible false all-clear is the wrong way round.
+	var result domain.ScanResult
+	if interrupted {
+		result = domain.NewPartialScanResult(start, time.Now(), requested, hosts, findings)
+	} else {
+		result = domain.NewScanResult(start, time.Now(), hosts, findings)
+	}
 	result.Label = strings.TrimSpace(*label)
 	// The vantage is part of the evidence: a month later, "three of twelve
 	// didn't answer" is only interpretable alongside where the scan ran from.
@@ -124,7 +139,12 @@ func run() int {
 	return result.ExitCode()
 }
 
-func probeAll(ctx context.Context, scanner *scan.Scanner, targets, buckets []string, concurrency int) ([]domain.Observation, []domain.HostSummary) {
+// probeAll fans out over targets and buckets, and reports whether it was cut
+// short. A cancelled context stops dispatch rather than racing through the
+// remaining targets: a probe we abandoned must not be recorded at all, because
+// "did not answer" is a claim about the customer's host and "we stopped" is a
+// claim about us.
+func probeAll(ctx context.Context, scanner *scan.Scanner, targets, buckets []string, concurrency int) ([]domain.Observation, []domain.HostSummary, bool) {
 	if concurrency < 1 {
 		concurrency = 1
 	}
@@ -135,6 +155,9 @@ func probeAll(ctx context.Context, scanner *scan.Scanner, targets, buckets []str
 	var hosts []domain.HostSummary
 
 	for _, t := range targets {
+		if ctx.Err() != nil {
+			break
+		}
 		t := t
 		wg.Add(1)
 		sem <- struct{}{}
@@ -142,6 +165,13 @@ func probeAll(ctx context.Context, scanner *scan.Scanner, targets, buckets []str
 			defer wg.Done()
 			defer func() { <-sem }()
 			hs := scanner.ProbeHost(ctx, t)
+			// A probe that was cancelled mid-flight reports "no response" or
+			// even "unresolved" - the resolver fails on a dead context too.
+			// Recording either would put a host on the report as unreachable
+			// when the only thing that happened is that we gave up on it.
+			if ctx.Err() != nil && hs.State != domain.HostResponded {
+				return
+			}
 			mu.Lock()
 			observations = append(observations, hs.Observations...)
 			hosts = append(hosts, hs.Summary())
@@ -150,6 +180,9 @@ func probeAll(ctx context.Context, scanner *scan.Scanner, targets, buckets []str
 	}
 
 	for _, b := range buckets {
+		if ctx.Err() != nil {
+			break
+		}
 		b := b
 		wg.Add(1)
 		sem <- struct{}{}
@@ -165,6 +198,9 @@ func probeAll(ctx context.Context, scanner *scan.Scanner, targets, buckets []str
 			if o.HTTPStatus == 0 {
 				state = domain.HostNoResponse
 			}
+			if ctx.Err() != nil && state != domain.HostResponded {
+				return
+			}
 			mu.Lock()
 			observations = append(observations, o)
 			hosts = append(hosts, domain.HostSummary{Host: o.Host, State: state})
@@ -174,7 +210,39 @@ func probeAll(ctx context.Context, scanner *scan.Scanner, targets, buckets []str
 
 	wg.Wait()
 	sort.Slice(hosts, func(i, j int) bool { return hosts[i].Host < hosts[j].Host })
-	return observations, hosts
+	return observations, hosts, ctx.Err() != nil
+}
+
+// interruptible returns a context cancelled by Ctrl-C, so a scan stopped in
+// the middle still writes the report for what it did reach.
+//
+// This is an operator affordance, not a nicety: the reason to stop a running
+// scan is usually that it is pointed at the wrong subnet or that the
+// authorization window closed, and in both cases throwing away the work means
+// re-scanning a customer's cluster to find out what was already known.
+//
+// The handler is detached after the first signal, so a second Ctrl-C gets the
+// default behaviour and kills the process immediately. An operator who wants
+// out now must be able to get out now.
+func interruptible() (context.Context, func()) {
+	ctx, cancel := context.WithCancel(context.Background())
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, os.Interrupt)
+	go func() {
+		select {
+		case <-sig:
+			signal.Stop(sig)
+			fmt.Fprintln(os.Stderr,
+				"\ninterrupted: stopping probes and writing a partial report "+
+					"(press Ctrl-C again to abandon it)")
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	return ctx, func() {
+		signal.Stop(sig)
+		cancel()
+	}
 }
 
 // ensureWritable creates dir if needed and confirms a file can actually be

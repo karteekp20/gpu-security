@@ -162,16 +162,24 @@ func PrintSummary(w io.Writer, r domain.ScanResult) {
 	if r.Label != "" {
 		fmt.Fprintf(w, "%s\n", r.Label)
 	}
-	if r.Inconclusive() {
+	switch {
+	case r.Inconclusive():
 		fmt.Fprintf(w, "Grade: %s - INCONCLUSIVE\n", v.Grade)
-	} else {
+	case !r.Graded():
+		fmt.Fprintf(w, "Grade: %s - INCOMPLETE (scan interrupted)\n", v.Grade)
+	default:
 		fmt.Fprintf(w, "Grade: %s (score %d/100)\n", v.Grade, v.Score)
 	}
 	if v.GradeReason != "" {
 		fmt.Fprintf(w, "%s\n", wrap(v.GradeReason, 76))
 	}
-	fmt.Fprintf(w, "Targets scanned: %d   Responded: %d   Hosts with findings: %d\n",
-		v.TargetsScanned, v.HostsResponded, v.HostsWithFindings)
+	if r.Interrupted {
+		fmt.Fprintf(w, "Targets scanned: %d of %d (INTERRUPTED)   Responded: %d   Hosts with findings: %d\n",
+			v.TargetsScanned, v.TargetsRequested, v.HostsResponded, v.HostsWithFindings)
+	} else {
+		fmt.Fprintf(w, "Targets scanned: %d   Responded: %d   Hosts with findings: %d\n",
+			v.TargetsScanned, v.HostsResponded, v.HostsWithFindings)
+	}
 	if v.HostsUnanswered > 0 || v.HostsUnresolved > 0 {
 		fmt.Fprintf(w, "Not assessed: %d no response, %d unresolved\n",
 			v.HostsUnanswered, v.HostsUnresolved)
@@ -180,11 +188,16 @@ func PrintSummary(w io.Writer, r domain.ScanResult) {
 		fmt.Fprintf(w, "  %-8s %d\n", c.Severity, c.Count)
 	}
 	if len(v.Findings) == 0 {
-		if r.Inconclusive() {
+		switch {
+		case r.Inconclusive():
 			fmt.Fprintf(w, "\nNothing was assessed. Do not read this as a clean result.\n")
-			return
+		case r.Interrupted:
+			fmt.Fprintf(w, "\nNo findings on the %d target(s) probed before the scan was stopped.\n"+
+				"The other %d were not assessed. Do not read this as a clean result.\n",
+				v.TargetsScanned, v.TargetsRequested-v.TargetsScanned)
+		default:
+			fmt.Fprintf(w, "\nNo exposure findings on the scanned targets.\n")
 		}
-		fmt.Fprintf(w, "\nNo exposure findings on the scanned targets.\n")
 		return
 	}
 	fmt.Fprintf(w, "\nFix these first:\n")
@@ -300,10 +313,20 @@ th{color:var(--muted);font-weight:600;font-size:.85rem}
   <div class="grade g-{{gradeClass .Grade}}">{{.Grade}}</div>
   <div>
     <p class="reason">{{.GradeReason}}</p>
-    <p class="facts">{{if not .Inconclusive}}Score {{.Score}}/100 &middot; {{end}}{{.TargetsScanned}} target(s) in {{.Duration}} &middot; {{.HostsResponded}} responded &middot; {{.HostsWithFindings}} with findings</p>
+    <p class="facts">{{if .Graded}}Score {{.Score}}/100 &middot; {{end}}{{if .Interrupted}}{{.TargetsScanned}} of {{.TargetsRequested}} target(s) probed{{else}}{{.TargetsScanned}} target(s){{end}} in {{.Duration}} &middot; {{.HostsResponded}} responded &middot; {{.HostsWithFindings}} with findings</p>
   </div>
 </div>
 {{if .SevCounts}}<ul class="counts">{{range .SevCounts}}<li><span class="sev {{.Severity}}">{{.Severity}}</span> {{.Count}}</li>{{end}}</ul>{{end}}
+
+{{if .Interrupted}}
+<div class="warn">
+<p><strong>Scan interrupted &mdash; this report is partial.</strong>
+{{.TargetsScanned}} of {{.TargetsRequested}} target(s) were probed before the scan was stopped.
+Anything listed below was observed and stands on its own, but no absence of a finding means
+anything here: the targets that were not reached were not assessed at all, and are not listed.
+Re-run the scan to completion before treating it as an assessment.</p>
+</div>
+{{end}}
 
 {{if .UnreachableShown}}
 <div class="warn">

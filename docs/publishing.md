@@ -6,7 +6,7 @@ it is written down as a checklist rather than left to recollection.
 
 Repo: `git@github.com:karteekp20/gpu-security.git`
 
-## Preflight — verified 2026-10-10
+## Preflight — verified 2026-10-10 (Ctrl-C row: 2026-10-24)
 
 Everything mechanical below has been run and passes. Re-run it if the tree
 moves; otherwise this is the record.
@@ -25,6 +25,7 @@ moves; otherwise this is the record.
 | Threat model read as an outsider | `docs/threat-model.md` | T6 corrected — see below |
 | Action pins match their comments | GitHub tag API, all 7 pins | OK — every SHA is the commit its `# vX.Y.Z` comment names |
 | Threat-model claims traced to code | T1–T7 | T4 corrected (the coverage list is capped at 10, not "every target"); the rest hold — path allowlist, CIDR hard ceiling `1<<18`, `html/template`, no-redirect, `gosec` enabled, `pull_request` trigger |
+| **Ctrl-C mid-scan** | `kill -INT` against a running `-cidr` sweep | exit **130**, report written, `interrupted: true`, "0 of 254 targets were probed", nothing recorded as unreachable. Checked by hand because the signal path itself cannot be tested without a timing-dependent test; re-run it if `cmd/ray-guard` changes |
 | Release instructions are runnable | `.github/workflows/release.yml` vs `SECURITY.md` | `.sig`/`.pem` names, upload globs, `cd bin && sha256sum -c` paths and `VERSION=` override all line up |
 
 **What that outsider read changed.** T6 claimed "pinned actions". The workflows

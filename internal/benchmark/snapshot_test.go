@@ -186,3 +186,35 @@ func TestEngagementLabelNeverReachesTheSnapshot(t *testing.T) {
 		}
 	}
 }
+
+// TestInterruptedScanIsMarkedInTheSnapshot. The index aggregates these files
+// into a published claim about how exposed the industry is; a scan that
+// stopped after 4 of 254 targets contributes findings from 4 hosts and
+// silence from 250. Averaging that in would report the industry as healthier
+// than it is, so the flag has to travel with the data.
+func TestInterruptedScanIsMarkedInTheSnapshot(t *testing.T) {
+	start := time.Date(2026, 9, 20, 10, 0, 0, 0, time.UTC)
+	r := domain.NewPartialScanResult(start, start.Add(time.Second), 254, respondedHosts(4), nil)
+
+	snap, err := Build(r, time.Now())
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if !snap.Interrupted {
+		t.Error("Interrupted is false for a partial scan; the index cannot exclude it")
+	}
+	if snap.TargetsScanned != 4 {
+		t.Errorf("TargetsScanned = %d, want the 4 actually probed", snap.TargetsScanned)
+	}
+	if snap.Grade != domain.GradeInconclusive {
+		t.Errorf("grade %s: a partial scan must not contribute a clean grade to the index", snap.Grade)
+	}
+
+	complete, err := Build(domain.NewScanResult(start, start.Add(time.Second), respondedHosts(4), nil), time.Now())
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if complete.Interrupted {
+		t.Error("Interrupted is true for a completed scan")
+	}
+}

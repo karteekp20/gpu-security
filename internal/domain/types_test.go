@@ -266,3 +266,117 @@ func TestScanResultCarriesVersion(t *testing.T) {
 		t.Error("the report must record which scanner produced it")
 	}
 }
+
+// -----------------------------------------------------------------------------
+// Interrupted scans
+//
+// Ctrl-C mid-scan is an ordinary event in the room: the operator pointed at
+// the wrong subnet, or the authorization window closed. What comes out must be
+// readable as partial, and must never read as a pass.
+// -----------------------------------------------------------------------------
+
+func partialResult(requested int, hosts []HostSummary, findings ...Finding) ScanResult {
+	start := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
+	return NewPartialScanResult(start, start.Add(time.Second), requested, hosts, findings)
+}
+
+// TestInterruptedScanNeverGradesClean is the point of the whole change. A scan
+// that covered 2 of 254 targets and found nothing has not found nothing.
+func TestInterruptedScanNeverGradesClean(t *testing.T) {
+	cases := []struct {
+		name     string
+		findings []Finding
+	}{
+		{"no findings at all", nil},
+		{"only info", []Finding{f("RG-EXPOSURE-001", Info, "host-a", 8080)}},
+		{"only low", []Finding{f("RG-TRITON-002", Low, "host-a", 8002)}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := partialResult(254, responded("host-a", "host-b"), tc.findings...)
+			if r.Grade != GradeInconclusive {
+				t.Errorf("grade %s on an interrupted scan; a clean grade claims coverage we do not have", r.Grade)
+			}
+			if r.Score != 0 {
+				t.Errorf("score %d on an interrupted scan, want 0", r.Score)
+			}
+			if r.Graded() {
+				t.Error("Graded() is true, so the report will print a score for a non-result")
+			}
+		})
+	}
+}
+
+// TestInterruptedScanStillReportsWhatItSaw is the other half: an observed
+// exposure is observed. Withholding an F because the scan was cut short would
+// bury the finding that mattered.
+func TestInterruptedScanStillReportsWhatItSaw(t *testing.T) {
+	r := partialResult(254, responded("host-a"), f("RG-RAY-001", Critical, "host-a", 8265))
+	if r.Grade != "F" {
+		t.Errorf("grade = %s, want F: a critical exposure is positive evidence", r.Grade)
+	}
+	if !strings.Contains(r.GradeReason, "stopped before it finished") {
+		t.Errorf("reason does not disclose the interruption: %q", r.GradeReason)
+	}
+	if !strings.Contains(r.GradeReason, "2 of 254") && !strings.Contains(r.GradeReason, "1 of 254") {
+		t.Errorf("reason does not state coverage: %q", r.GradeReason)
+	}
+	if !strings.Contains(r.GradeReason, "floor") {
+		t.Errorf("reason should say the grade is a floor, not a verdict: %q", r.GradeReason)
+	}
+}
+
+// TestInterruptedCoverageCountsAreHonest: the targets we never dialed are not
+// recorded as unreachable. "We stopped" is a fact about us; "it did not
+// answer" is a fact about the customer's host, and only one of them is true.
+func TestInterruptedCoverageCountsAreHonest(t *testing.T) {
+	r := partialResult(254, responded("host-a", "host-b"))
+	if r.TargetsRequested != 254 {
+		t.Errorf("TargetsRequested = %d, want 254", r.TargetsRequested)
+	}
+	if r.TargetsScanned != 2 {
+		t.Errorf("TargetsScanned = %d, want 2", r.TargetsScanned)
+	}
+	if r.HostsUnanswered != 0 || r.HostsUnresolved != 0 {
+		t.Errorf("unanswered=%d unresolved=%d: unprobed targets must not be reported as unreachable",
+			r.HostsUnanswered, r.HostsUnresolved)
+	}
+	if len(r.Unreachable) != 0 {
+		t.Errorf("Unreachable lists %d host(s) that were simply never probed", len(r.Unreachable))
+	}
+	if !r.Interrupted {
+		t.Error("Interrupted = false on a partial result")
+	}
+}
+
+// TestInterruptedExitCodeIsNeverZero: a pipeline must not go green on a run
+// that did not finish, whatever it managed to see first.
+func TestInterruptedExitCodeIsNeverZero(t *testing.T) {
+	cases := [][]Finding{
+		nil,
+		{f("RG-RAY-001", Critical, "host-a", 8265)},
+		{f("RG-TRITON-002", Low, "host-a", 8002)},
+	}
+	for i, findings := range cases {
+		r := partialResult(254, responded("host-a"), findings...)
+		if got := r.ExitCode(); got != ExitInterrupted {
+			t.Errorf("case %d: exit code %d, want %d (128+SIGINT)", i, got, ExitInterrupted)
+		}
+	}
+}
+
+// TestCompletedScanKeepsItsRequestedCount guards the ordinary path: the two
+// counts agree, so nothing in the report implies a coverage gap that is not
+// there.
+func TestCompletedScanKeepsItsRequestedCount(t *testing.T) {
+	r := resultWithHosts(responded("host-a", "host-b", "host-c"))
+	if r.TargetsRequested != r.TargetsScanned {
+		t.Errorf("requested %d but scanned %d on a completed scan", r.TargetsRequested, r.TargetsScanned)
+	}
+	if r.Interrupted {
+		t.Error("Interrupted = true on a completed scan")
+	}
+	if r.Grade != "A+" || !r.Graded() {
+		t.Errorf("completed clean scan graded %s; the interrupted gate must not catch it", r.Grade)
+	}
+}

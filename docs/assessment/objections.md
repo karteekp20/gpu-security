@@ -137,6 +137,12 @@ Say the real answer, not the comfortable one.
 > at any point you want it stopped, say so and I stop. And we'll agree the
 > window in advance so it isn't running during anything you care about."
 
+Stopping is real, and worth saying plainly: Ctrl-C halts the probing
+immediately and still writes the report for whatever was already reached,
+marked as interrupted and explicitly not gradeable. Nobody has to weigh
+"stop this now" against "lose the run and book another window" — which is
+the quiet reason a scan keeps going when someone is uneasy.
+
 If they are still uneasy, offer the smaller scope: scan a subset, or a staging
 environment first. An assessment on ten hosts that happens beats one on two
 hundred that does not.

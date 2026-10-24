@@ -90,10 +90,24 @@ Wire it into your own CI — the exit code encodes the worst severity found.
 | 5 | Worst finding was high |
 | 6 | Worst finding was critical |
 | 7 | **Inconclusive** — no target responded, so nothing was verified |
+| 130 | **Interrupted** — Ctrl-C; the scan did not finish (128 + SIGINT) |
 
 Exit 7 is deliberately non-zero. A scan that reached nothing proves nothing,
 however empty its finding list — if your targets move or DNS changes, the
 pipeline should fail rather than pass green forever on a scan of nowhere.
+
+### Stopping a scan
+
+Ctrl-C stops probing immediately and still writes the report for what was
+actually reached; a second Ctrl-C abandons it. The partial report says so on
+its first line, states how many of the requested targets were probed, and
+**cannot earn a clean grade** — `A`/`A+` are claims about what is not there,
+and an interrupted sweep has not looked. Findings it did observe are reported
+in full and still drive the grade, as a floor rather than a verdict.
+
+Targets that were never dialed are not listed as unreachable. "We stopped" is
+a fact about the scanner; "it did not answer" is a fact about the host, and
+only one of them is true.
 
 ### Detections
 

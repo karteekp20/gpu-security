@@ -43,8 +43,14 @@ type Snapshot struct {
 	// HostsResponded is what makes the rest of this record meaningful. An
 	// aggregate index that silently averages in scans which reached nothing
 	// would report the industry as far healthier than it is.
-	HostsResponded    int            `json:"hosts_responded"`
-	Inconclusive      bool           `json:"inconclusive"`
+	HostsResponded int  `json:"hosts_responded"`
+	Inconclusive   bool `json:"inconclusive"`
+	// Interrupted marks a scan the operator stopped part-way. Like
+	// Inconclusive, it exists so the index can exclude a run that never
+	// covered what it set out to: averaging partial scans in would understate
+	// exposure, because the targets that went unprobed cannot contribute
+	// findings.
+	Interrupted       bool           `json:"interrupted"`
 	HostsWithFindings int            `json:"hosts_with_findings"`
 	Grade             domain.Grade   `json:"grade"`
 	Score             int            `json:"score"`
@@ -93,6 +99,7 @@ func Build(r domain.ScanResult, now time.Time) (Snapshot, error) {
 		TargetsScanned:    r.TargetsScanned,
 		HostsResponded:    r.HostsResponded,
 		Inconclusive:      r.Inconclusive(),
+		Interrupted:       r.Interrupted,
 		HostsWithFindings: r.HostsWithFindings,
 		Grade:             r.Grade,
 		Score:             r.Score,

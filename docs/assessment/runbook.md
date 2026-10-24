@@ -44,6 +44,12 @@ alone against their public IPs does not count, however good the report is.
 Boring, and it is what a professional does. It also gives anyone in the room a
 last chance to mention the host nobody told you about.
 
+And mean it: **Ctrl-C stops the probing immediately** and still writes the
+report for the targets already reached, marked as interrupted and ungradeable.
+So "say stop and I'll stop" costs you nothing — you do not lose the run, and
+you do not have to ask for a second scan window to recover it. If someone in
+the room says stop, stop, then read what you have out loud as partial.
+
 **2. Share your screen and run it.** Let them watch it happen. The tool being
 unremarkable to watch is part of the reassurance.
 

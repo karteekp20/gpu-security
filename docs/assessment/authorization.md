@@ -161,7 +161,9 @@ probe, but no scan of a live system is entirely without risk, and a fragile or
 undocumented service could in principle respond badly.
 
 The assessor will stop immediately on request from any listed contact, by any
-means, without needing a reason.
+means, without needing a reason. Stopping takes effect at once: in-flight
+probes are abandoned, no further host is contacted, and the partial result is
+marked as incomplete rather than reported as a clean assessment.
 
 ### 8. Authorization
 

@@ -9,6 +9,7 @@
 package domain
 
 import (
+	"fmt"
 	"sort"
 	"time"
 )
@@ -119,10 +120,21 @@ type ScanResult struct {
 	// twelve didn't answer" means something different when the answer is "you
 	// were on the wrong side of a firewall", and a report read a month later
 	// has no other way to say where it was taken from.
-	ScannedFrom       string           `json:"scanned_from,omitempty"`
-	StartedAt         time.Time        `json:"started_at"`
-	CompletedAt       time.Time        `json:"completed_at"`
-	TargetsScanned    int              `json:"targets_scanned"`
+	ScannedFrom string    `json:"scanned_from,omitempty"`
+	StartedAt   time.Time `json:"started_at"`
+	CompletedAt time.Time `json:"completed_at"`
+	// TargetsRequested is what the operator asked for; TargetsScanned is what
+	// was actually attempted. They differ only when the scan was stopped early,
+	// and the difference is the whole point: "41 of 254 probed" is a different
+	// report from "41 probed".
+	TargetsRequested int `json:"targets_requested"`
+	TargetsScanned   int `json:"targets_scanned"`
+	// Interrupted means the operator stopped the scan before it finished
+	// (Ctrl-C). Findings already observed still stand - exposure is positive
+	// evidence - but the absence of a finding proves nothing about a target
+	// that was never probed, so an interrupted scan can never earn a clean
+	// grade.
+	Interrupted       bool             `json:"interrupted,omitempty"`
 	HostsResponded    int              `json:"hosts_responded"`
 	HostsUnanswered   int              `json:"hosts_unanswered"`
 	HostsUnresolved   int              `json:"hosts_unresolved"`
@@ -139,13 +151,33 @@ type ScanResult struct {
 // reached nothing proves nothing, however empty its finding list.
 func (r ScanResult) Inconclusive() bool { return r.HostsResponded == 0 }
 
+// Graded reports whether the run produced a gradeable verdict. It is false
+// both when nothing responded and when an interrupted scan found nothing worth
+// grading - in neither case is a score meaningful, and showing one anyway is
+// how a non-result starts looking like a pass.
+func (r ScanResult) Graded() bool { return r.Grade != GradeInconclusive }
+
 // PartialCoverage reports whether some targets answered and others did not -
 // the grade is then real but covers less than the operator asked for.
 func (r ScanResult) PartialCoverage() bool {
 	return r.HostsResponded > 0 && (r.HostsUnanswered > 0 || r.HostsUnresolved > 0)
 }
 
+// NewScanResult records a run that covered everything it was asked to.
 func NewScanResult(start, end time.Time, hosts []HostSummary, findings []Finding) ScanResult {
+	return newResult(start, end, len(hosts), false, hosts, findings)
+}
+
+// NewPartialScanResult records a run that was stopped before it covered what it
+// was asked to: requested is what the operator asked for, hosts is what was
+// actually attempted. Targets that were never probed are deliberately absent
+// from hosts rather than listed as unreachable - "we stopped" and "it did not
+// answer" are different facts, and only one of them is about the customer.
+func NewPartialScanResult(start, end time.Time, requested int, hosts []HostSummary, findings []Finding) ScanResult {
+	return newResult(start, end, requested, true, hosts, findings)
+}
+
+func newResult(start, end time.Time, requested int, interrupted bool, hosts []HostSummary, findings []Finding) ScanResult {
 	summary := map[Severity]int{}
 	affected := map[string]struct{}{}
 	for _, f := range findings {
@@ -156,7 +188,9 @@ func NewScanResult(start, end time.Time, hosts []HostSummary, findings []Finding
 	r := ScanResult{
 		ScannerVersion: Version,
 		StartedAt:      start, CompletedAt: end,
+		TargetsRequested:  requested,
 		TargetsScanned:    len(hosts),
+		Interrupted:       interrupted,
 		HostsWithFindings: len(affected),
 		Findings:          findings, Summary: summary,
 	}
@@ -173,16 +207,19 @@ func NewScanResult(start, end time.Time, hosts []HostSummary, findings []Finding
 		}
 	}
 
-	r.Score, r.Grade = gradeFor(summary, r.HostsResponded)
+	r.Score, r.Grade = gradeFor(summary, r.HostsResponded, !interrupted)
 	r.GradeReason = gradeReason(r.Grade, findings, r)
 	return r
 }
 
 // gradeFor is PROVISIONAL (CLAUDE.md 10.0) - validate thresholds with buyers.
 //
-// responded gates the clean grades: an empty finding list only means "clean"
-// if we actually reached something.
-func gradeFor(s map[Severity]int, responded int) (int, Grade) {
+// responded and complete both gate the clean grades, for the same reason: A and
+// A+ are claims about what is *not* there, and absence of evidence is only
+// evidence of absence if we looked. A finding-driven grade needs neither gate -
+// an exposure we observed is observed whether or not the scan finished - so the
+// two checks sit below the severity cases, not above them.
+func gradeFor(s map[Severity]int, responded int, complete bool) (int, Grade) {
 	switch {
 	case s[Critical] > 0:
 		return 40, "F"
@@ -190,10 +227,10 @@ func gradeFor(s map[Severity]int, responded int) (int, Grade) {
 		return 60, "C"
 	case s[Medium] > 0:
 		return 78, "B"
+	case responded == 0 || !complete:
+		return 0, GradeInconclusive
 	case s[Low] > 0 || s[Info] > 0:
 		return 90, "A"
-	case responded == 0:
-		return 0, GradeInconclusive
 	default:
 		return 100, "A+"
 	}
@@ -202,6 +239,9 @@ func gradeFor(s map[Severity]int, responded int) (int, Grade) {
 // gradeReason states, in one plain sentence, which finding drove the grade.
 // A grade a buyer cannot trace back to a specific cause is not persuasive.
 func gradeReason(g Grade, findings []Finding, r ScanResult) string {
+	if r.Interrupted {
+		return interruptedReason(g, findings, r)
+	}
 	switch g {
 	case GradeInconclusive:
 		if r.TargetsScanned == 0 {
@@ -237,6 +277,27 @@ func gradeReason(g Grade, findings []Finding, r ScanResult) string {
 	default:
 		return "Non-critical drift was observed: " + worst.Title + "."
 	}
+}
+
+// interruptedReason says the one thing the reader of a partial report needs to
+// know first: how much of it is missing. A grade driven by a finding is still
+// stated - the exposure was observed - but it is stated with the coverage gap
+// attached, because the honest reading of a stopped scan is "at least this
+// bad", never "this bad".
+func interruptedReason(g Grade, findings []Finding, r ScanResult) string {
+	coverage := fmt.Sprintf("%d of %d targets were probed", r.TargetsScanned, r.TargetsRequested)
+	if g == GradeInconclusive {
+		return "No grade: the scan was stopped before it finished, so coverage is " +
+			"incomplete and there is no basis for a clean result (" + coverage +
+			"). Re-run it to completion."
+	}
+	worst := WorstFinding(findings)
+	if worst == nil {
+		return "The scan was stopped before it finished (" + coverage + ")."
+	}
+	return "The scan was stopped before it finished, so this is a floor and not " +
+		"a verdict (" + coverage + "). What was observed: " + worst.Title +
+		". Worse exposure may exist on the targets that were not probed."
 }
 
 var sevOrder = []Severity{Critical, High, Medium, Low, Info}
@@ -283,15 +344,24 @@ func WorstFinding(findings []Finding) *Finding {
 	return &sorted[0]
 }
 
+// ExitInterrupted follows the shell convention for a process stopped by
+// SIGINT (128 + 2). It takes precedence over the severity codes: those answer
+// "how bad is this cluster", and a run that did not finish has not earned an
+// answer to that question. Any caller gating on 0 still fails, which is the
+// property that matters.
+const ExitInterrupted = 130
+
 // ExitCode maps the worst observed severity to a process exit code so a tenant
 // can gate their own CI on it. 0 = clean; 1 = runtime error; 2 = usage error;
-// 7 = inconclusive.
+// 7 = inconclusive; 130 = interrupted.
 //
 // Inconclusive is deliberately non-zero. A pipeline whose scan target moved,
 // or whose DNS changed, must fail loudly rather than pass green forever on a
 // scan that reached nothing.
 func (r ScanResult) ExitCode() int {
 	switch {
+	case r.Interrupted:
+		return ExitInterrupted
 	case r.Summary[Critical] > 0:
 		return 6
 	case r.Summary[High] > 0:

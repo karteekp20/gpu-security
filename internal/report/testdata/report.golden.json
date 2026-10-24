@@ -4,6 +4,7 @@
   "scanned_from": "assessor-laptop",
   "started_at": "2026-09-20T14:00:00Z",
   "completed_at": "2026-09-20T14:00:12Z",
+  "targets_requested": 4,
   "targets_scanned": 4,
   "hosts_responded": 4,
   "hosts_unanswered": 0,

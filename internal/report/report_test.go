@@ -206,3 +206,69 @@ func TestWriteEmitsBothArtifacts(t *testing.T) {
 		}
 	}
 }
+
+// interruptedFixture is the same scan as fixture(), stopped after 4 of 254
+// targets. It is a golden file because a partial report is an artifact a buyer
+// may well read - the operator who stopped the scan is not always the person
+// who opens the HTML afterwards.
+func interruptedFixture() domain.ScanResult {
+	full := fixture()
+	r := domain.NewPartialScanResult(full.StartedAt, full.CompletedAt, 254,
+		respondedHosts("10.0.0.5", "10.0.0.6", "10.0.0.7", "10.0.0.8"), full.Findings)
+	r.Label = full.Label
+	r.ScannedFrom = full.ScannedFrom
+	return r
+}
+
+func TestGoldenInterruptedHTML(t *testing.T) {
+	var buf bytes.Buffer
+	if err := RenderHTML(&buf, interruptedFixture()); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	goldenCheck(t, "interrupted.golden.html", buf.Bytes())
+}
+
+// TestInterruptedHTMLSaysSoBeforeTheFindings: a reader who skims the top of
+// the page must learn that it is partial there, not three sections down.
+func TestInterruptedHTMLSaysSoBeforeTheFindings(t *testing.T) {
+	html := renderString(t, interruptedFixture())
+	banner := strings.Index(html, "Scan interrupted")
+	if banner < 0 {
+		t.Fatal("no interruption notice in the report")
+	}
+	if findings := strings.Index(html, "Fix these first"); banner > findings {
+		t.Error("the interruption notice comes after the findings list")
+	}
+	if !strings.Contains(html, "4 of 254 target(s) were probed") {
+		t.Error("the notice does not say how much of the scan ran")
+	}
+}
+
+// TestInterruptedCleanScanShowsNoScore: a stopped scan that happened to see
+// nothing has no score, and must not display one - a "0/100" would read as a
+// catastrophic finding and a "100/100" as a pass. Neither is true.
+func TestInterruptedCleanScanShowsNoScore(t *testing.T) {
+	start := time.Date(2026, 9, 20, 14, 0, 0, 0, time.UTC)
+	r := domain.NewPartialScanResult(start, start.Add(2*time.Second), 254,
+		respondedHosts("10.0.0.5"), nil)
+	html := renderString(t, r)
+	if strings.Contains(html, "Score ") {
+		t.Error("a score is rendered for an interrupted scan with nothing to grade")
+	}
+	if !strings.Contains(html, "N/A") {
+		t.Error("the grade is not N/A")
+	}
+
+	var buf bytes.Buffer
+	PrintSummary(&buf, r)
+	out := buf.String()
+	if !strings.Contains(out, "INCOMPLETE") {
+		t.Errorf("terminal summary does not say the scan was incomplete:\n%s", out)
+	}
+	if !strings.Contains(out, "1 of 254") {
+		t.Errorf("terminal summary does not state coverage:\n%s", out)
+	}
+	if !strings.Contains(out, "Do not read this as a clean result") {
+		t.Errorf("terminal summary does not warn against reading it as clean:\n%s", out)
+	}
+}
