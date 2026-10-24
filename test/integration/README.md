@@ -29,6 +29,7 @@ Coverage is not uniform, and the split is deliberate:
 | MLflow | **Real** | CPU-only, representative |
 | Ollama | **Real** | CPU-only; `/api/tags` answers without a model pull |
 | TorchServe | **Real** (`pytorch/torchserve:0.12.0-cpu`, 1.9GB) | The second critical detection. Must be real, for the same reason Ray must be. Runs twice: exposed, and token-protected as a negative control. |
+| TLS proxy | **Real** (`nginx:alpine`) | Terminates TLS with a real self-signed certificate in front of the real Ray dashboard. Until this existed, every TLS test ran against Go's own `httptest` server — our own TLS stack agreeing with itself. |
 | vLLM | *Fixture* | GPU-bound image; replays documented `/v1/models` shape |
 | Triton | *Fixture* in CI, **real on demand** | The image runs CPU-only but is 16GB — more than a standard GitHub runner's free disk. The fixture replays `/v2/health/ready` and `/metrics`; `docker compose --profile heavy up -d triton-real` runs the real one on `.25`, and `-run RealTriton` checks it. |
 | SGLang | *Fixture* | GPU-bound image; replays `/get_model_info` on 30000 |
@@ -53,6 +54,21 @@ Real TorchServe also serves 8080, its inference port, whose only `GET` is
 assertion there is that the scan reports `RG-EXPOSURE-001` at Info and never
 names a service. That port is shared by TGI, LocalAI and most things with a
 model behind them; a 200 on `/ping` is not evidence of TorchServe.
+
+## The TLS fixture is generated, not committed
+
+`make tls-fixture` (a dependency of `make test-integration` and `make
+demo-up`) runs `fixtures/gencert`, which writes a self-signed certificate and
+key into `fixtures/tls/` — gitignored. **If you bring the stack up with a bare
+`docker compose up`, run that first**, or nginx will not start and
+`wait-ready.sh` will time out on `172.31.77.50:8265`.
+
+No private key lives in this repository. A test key is harmless in principle,
+but a security product shipping a `.pem` in its own tree invites exactly one
+question in review, and "it's only for tests" is a worse answer than not
+having one. The generator is ~90 lines of dependency-free Go because
+`nginx:alpine` has no `openssl` binary and a test suite should not assume the
+host has one either.
 
 ## The negative cases matter as much as the positive ones
 
@@ -106,6 +122,16 @@ by default since 0.12, so `RG-TORCHSERVE-001` can only fire where that was
 switched off or where the build predates it. The remediation now says exactly
 that. The wrong version would have been corrected by the first TorchServe
 operator in the room, on the rule we lead with.
+
+**ray-guard could not see through TLS 1.0 or 1.1 at all.** Not found here —
+found by pointing the probe at a server capped at those versions — but it is
+why the nginx proxy now exists. Go's client refuses an obsolete handshake by
+default, so the probe concluded "not TLS", tried plaintext against a TLS port,
+and reported an unauthenticated Ray dashboard behind an old terminating proxy
+as an unidentified open port. The floor is now TLS 1.0 for measurement
+purposes and the negotiated version is reported (`RG-TLS-003`). The nginx
+proxy is the other half of that check: modern TLS must still negotiate 1.2/1.3
+and must *not* raise the obsolete-version finding.
 
 ## Running the heavy profile
 

@@ -116,7 +116,8 @@ services:
   # is the only place TLS detection had ever been exercised.
   #
   # The certificate is generated at test time (fixtures/gencert) so no private
-  # key lives in this repository.
+  # key lives in this repository: run `make tls-fixture` first if you bring
+  # this stack up by hand, or nginx will not start.
   tls-proxy:
     image: nginx:alpine
     volumes:
