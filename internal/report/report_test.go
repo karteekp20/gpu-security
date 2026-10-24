@@ -308,7 +308,7 @@ func TestDegradedHTMLNamesTheCauseAndTheFix(t *testing.T) {
 	if findings := strings.Index(html, "Fix these first"); banner > findings {
 		t.Error("the degradation notice comes after the findings list")
 	}
-	for _, want := range []string{"11 probe(s) failed", "ulimit -n", "-concurrency",
+	for _, want := range []string{"11 probe(s) failed", "ulimit -Hn", "-concurrency",
 		"not a finding about the targets"} {
 		if !strings.Contains(html, want) {
 			t.Errorf("the notice does not mention %q", want)
@@ -342,7 +342,7 @@ func TestPrintSummaryWarnsAboutProbeFailures(t *testing.T) {
 	var buf bytes.Buffer
 	PrintSummary(&buf, degradedFixture())
 	out := buf.String()
-	for _, want := range []string{"WARNING", "under-reports", "ulimit -n", "1 probe failures"} {
+	for _, want := range []string{"WARNING", "under-reports", "ulimit -Hn", "1 probe failures"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("terminal summary does not mention %q:\n%s", want, out)
 		}

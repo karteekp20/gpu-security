@@ -77,8 +77,8 @@ func run() int {
 	if max := scan.MaxHostConcurrency(checks); max > 0 && *concurrency > max {
 		fmt.Fprintf(os.Stderr,
 			"notice: -concurrency %d exceeds what this host's open-file limit allows; using %d.\n"+
-				"        Raise it with `ulimit -n` for a faster scan. Probing beyond the limit\n"+
-				"        does not fail loudly - it silently under-reports.\n",
+				"        Raise the host's hard limit (ulimit -Hn) for a faster scan. Probing\n"+
+				"        beyond the limit does not fail loudly - it silently under-reports.\n",
 			*concurrency, max)
 		*concurrency = max
 	}

@@ -100,11 +100,17 @@ forever on a scan of nowhere.
 ### Resource limits — why a scan can be slower than you expect
 
 `-concurrency` is clamped to what the open-file limit on *your* machine can
-sustain (roughly `ulimit -n / 2 × ports probed`), and the scanner says so when
-it clamps. Raise the limit for a faster scan:
+sustain (roughly `hard ulimit / 2 × ports probed`), and the scanner says so
+when it clamps.
+
+The limit that matters is the **hard** one. Go raises the soft limit to the
+hard limit at startup, so `ulimit -n 4096` changes nothing here — on most
+hosts the hard limit is high and the clamp never binds at all. Where it does
+bind is a container or CI image with a low hard limit:
 
 ```bash
-ulimit -n 4096 && ray-guard -cidr 10.0.0.0/24 -concurrency 128
+ulimit -Hn                                  # the number that matters
+docker run --ulimit nofile=8192:8192 ...    # if you scan from a container
 ```
 
 This is not tidiness. Probing past the descriptor limit does not fail loudly —

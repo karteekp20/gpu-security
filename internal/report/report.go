@@ -188,7 +188,7 @@ func PrintSummary(w io.Writer, r domain.ScanResult) {
 	}
 	if r.Degraded() {
 		fmt.Fprintf(w, "WARNING: %d probe(s) failed inside the scanner, so this scan under-reports.\n"+
-			"         Lower -concurrency or raise `ulimit -n`, then re-run.\n", r.ProbeErrors)
+			"         Lower -concurrency, or raise the hard limit (ulimit -Hn), then re-run.\n", r.ProbeErrors)
 	}
 	for _, c := range v.SevCounts {
 		fmt.Fprintf(w, "  %-8s %d\n", c.Severity, c.Count)
@@ -342,8 +342,9 @@ Re-run the scan to completion before treating it as an assessment.</p>
 <p><strong>This scan under-reports &mdash; {{.ProbeErrors}} probe(s) failed inside the scanner.</strong>
 Those probes never reached a conclusion, so services may be running on ports this report says
 nothing about. This is a limit on the machine the scan ran from, not a finding about the targets:
-almost always the open-file limit. Lower <code>-concurrency</code> or raise <code>ulimit -n</code>,
-then re-run. What is listed below was still observed; what is missing proves nothing.</p>
+almost always the open-file limit. Lower <code>-concurrency</code>, or raise the host's hard
+limit (<code>ulimit -Hn</code> &mdash; raising the soft limit alone does nothing here), then
+re-run. What is listed below was still observed; what is missing proves nothing.</p>
 </div>
 {{end}}
 

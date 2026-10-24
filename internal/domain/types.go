@@ -355,7 +355,8 @@ func interruptedReason(g Grade, findings []Finding, r ScanResult) string {
 // and the operator can fix it in one command and re-run.
 func degradedReason(g Grade, findings []Finding, r ScanResult) string {
 	const remedy = "This is the scanner hitting a local limit, not a finding about the " +
-		"targets: lower -concurrency or raise the open-file limit (ulimit -n), then re-run."
+		"targets: lower -concurrency, or raise the host's hard open-file limit " +
+		"(ulimit -Hn; the soft limit is raised automatically), then re-run."
 	count := fmt.Sprintf("%d probe(s) failed inside the scanner", r.ProbeErrors)
 	if g == GradeInconclusive {
 		return "No grade: " + count + ", so these results are unreliable. " + remedy

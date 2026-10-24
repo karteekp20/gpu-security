@@ -54,7 +54,7 @@ th{color:var(--muted);font-weight:600;font-size:.85rem}
 <div class="hero">
   <div class="grade g-F">F</div>
   <div>
-    <p class="reason">Treat this as a floor, not a verdict: 11 probe(s) failed inside the scanner, so exposure may have been missed. What was observed: Unauthenticated Ray dashboard / Jobs API exposed. This is the scanner hitting a local limit, not a finding about the targets: lower -concurrency or raise the open-file limit (ulimit -n), then re-run.</p>
+    <p class="reason">Treat this as a floor, not a verdict: 11 probe(s) failed inside the scanner, so exposure may have been missed. What was observed: Unauthenticated Ray dashboard / Jobs API exposed. This is the scanner hitting a local limit, not a finding about the targets: lower -concurrency, or raise the host&#39;s hard open-file limit (ulimit -Hn; the soft limit is raised automatically), then re-run.</p>
     <p class="facts">Score 40/100 &middot; 3 target(s) in 12s &middot; 2 responded &middot; 2 with findings</p>
   </div>
 </div>
@@ -67,8 +67,9 @@ th{color:var(--muted);font-weight:600;font-size:.85rem}
 <p><strong>This scan under-reports &mdash; 11 probe(s) failed inside the scanner.</strong>
 Those probes never reached a conclusion, so services may be running on ports this report says
 nothing about. This is a limit on the machine the scan ran from, not a finding about the targets:
-almost always the open-file limit. Lower <code>-concurrency</code> or raise <code>ulimit -n</code>,
-then re-run. What is listed below was still observed; what is missing proves nothing.</p>
+almost always the open-file limit. Lower <code>-concurrency</code>, or raise the host's hard
+limit (<code>ulimit -Hn</code> &mdash; raising the soft limit alone does nothing here), then
+re-run. What is listed below was still observed; what is missing proves nothing.</p>
 </div>
 
 

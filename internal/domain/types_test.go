@@ -432,7 +432,7 @@ func TestDegradedScanStillReportsWhatItSaw(t *testing.T) {
 	if got := r.ExitCode(); got != 6 {
 		t.Errorf("exit code %d, want 6 (critical)", got)
 	}
-	for _, want := range []string{"floor", "3 probe(s) failed", "ulimit -n", "-concurrency"} {
+	for _, want := range []string{"floor", "3 probe(s) failed", "ulimit -Hn", "-concurrency"} {
 		if !strings.Contains(r.GradeReason, want) {
 			t.Errorf("grade reason does not mention %q: %q", want, r.GradeReason)
 		}

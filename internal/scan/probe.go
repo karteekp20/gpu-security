@@ -151,9 +151,14 @@ const fdReserve = 64
 // degraded, but the better outcome is not to get there, so the scan is clamped
 // to what the host can actually sustain and the operator is told why.
 //
-// A machine whose limit is small enough to clamp hard (macOS defaults to a
-// 256 soft limit; containers are often lower) gets a slower, correct scan
-// rather than a fast, wrong one.
+// What binds here is the HARD limit, not the soft one: since Go 1.19 the
+// runtime raises RLIMIT_NOFILE's soft limit to the hard limit at startup, so
+// the familiar low soft defaults (macOS ships 256) are raised before any of
+// this runs and are not the case to worry about. Verified rather than assumed:
+// a shell soft limit of 128 with a hard limit of 524288 is seen by the Go
+// process as 524288. The cases that actually bind are containers and CI images
+// with a low hard limit, and hosts whose limits.conf sets one. Such a machine
+// gets a slower, correct scan rather than a fast, wrong one.
 func MaxHostConcurrency(checks []Check) int {
 	var rl syscall.Rlimit
 	if err := syscall.Getrlimit(syscall.RLIMIT_NOFILE, &rl); err != nil {
