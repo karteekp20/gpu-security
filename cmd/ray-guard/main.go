@@ -71,6 +71,16 @@ func run() int {
 		}
 	}
 
+	// Same reason as the output-path check below: an operator who mistyped one
+	// of five buckets should find out now, not from a stderr line in the
+	// middle of a sweep and a report that quietly omits something in scope.
+	for _, b := range buckets {
+		if err := scan.ValidateBucketURL(b); err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			return exitUsageError
+		}
+	}
+
 	// Check the output paths BEFORE touching the network. A scan that runs to
 	// completion and then cannot write its report has cost the operator a
 	// second pass over a customer's cluster to fix a typo - and the

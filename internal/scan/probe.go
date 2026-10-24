@@ -541,18 +541,35 @@ func (s *Scanner) httpProbe(ctx context.Context, host string, c Check, tlsState 
 	return o
 }
 
-// ProbeBucket checks whether an object-storage bucket lists publicly. It
-// issues one unauthenticated GET and decides from the STATUS CODE ALONE. The
-// response body is discarded unparsed: object keys are customer data, not
-// metadata, so we never look at them (P3).
-func (s *Scanner) ProbeBucket(ctx context.Context, raw string) (domain.Observation, error) {
+// ValidateBucketURL reports whether a -buckets entry is probeable at all. It
+// exists so a typo is rejected before the scan starts: the alternative is a
+// line on stderr half-way through a sweep and a bucket that was in scope
+// quietly missing from the report.
+func ValidateBucketURL(raw string) error {
+	_, err := parseBucketURL(raw)
+	return err
+}
+
+func parseBucketURL(raw string) (*url.URL, error) {
 	target := raw
 	if !strings.Contains(target, "://") {
 		target = "https://" + target
 	}
 	u, err := url.Parse(target)
 	if err != nil || u.Host == "" {
-		return domain.Observation{}, fmt.Errorf("invalid bucket URL %q", raw)
+		return nil, fmt.Errorf("invalid bucket URL %q: want a URL or host, e.g. https://bucket.s3.amazonaws.com", raw)
+	}
+	return u, nil
+}
+
+// ProbeBucket checks whether an object-storage bucket lists publicly. It
+// issues one unauthenticated GET and decides from the STATUS CODE ALONE. The
+// response body is discarded unparsed: object keys are customer data, not
+// metadata, so we never look at them (P3).
+func (s *Scanner) ProbeBucket(ctx context.Context, raw string) (domain.Observation, error) {
+	u, err := parseBucketURL(raw)
+	if err != nil {
+		return domain.Observation{}, err
 	}
 	o := domain.Observation{Host: u.Host, Service: ServiceBucket, State: domain.PortOpen,
 		TLS: domain.TLSState{Enabled: u.Scheme == "https"}}

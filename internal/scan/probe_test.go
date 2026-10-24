@@ -663,3 +663,46 @@ func TestEveryPathAgnosticServiceExists(t *testing.T) {
 		}
 	}
 }
+
+// TestValidateBucketURLAgreesWithProbeBucket. The up-front check in main and
+// the probe itself must accept exactly the same strings: a validator that is
+// stricter rejects a scan that would have worked, and one that is looser puts
+// the error back where it was, mid-sweep.
+func TestValidateBucketURLAgreesWithProbeBucket(t *testing.T) {
+	cases := []struct {
+		in    string
+		valid bool
+	}{
+		{"https://bucket.s3.amazonaws.com", true},
+		{"bucket.s3.amazonaws.com", true}, // scheme defaulted to https
+		{"http://127.0.0.1:9000/models", true},
+		{"://nonsense", false},
+		{"https://", false},
+		{"", false},
+		{"https://bucket name.example.com", false},
+	}
+	s := New(50 * time.Millisecond)
+	for _, tc := range cases {
+		gotValid := ValidateBucketURL(tc.in) == nil
+		if gotValid != tc.valid {
+			t.Errorf("ValidateBucketURL(%q) valid=%v, want %v", tc.in, gotValid, tc.valid)
+		}
+		_, err := s.ProbeBucket(context.Background(), tc.in)
+		if probeAccepted := err == nil; probeAccepted != tc.valid {
+			t.Errorf("ProbeBucket(%q) accepted=%v but the validator said %v: the two must agree",
+				tc.in, probeAccepted, tc.valid)
+		}
+	}
+}
+
+// TestValidateBucketURLErrorNamesTheInput: the operator has to be able to see
+// which of five -buckets entries they fat-fingered.
+func TestValidateBucketURLErrorNamesTheInput(t *testing.T) {
+	err := ValidateBucketURL("://typo")
+	if err == nil {
+		t.Fatal("no error for a malformed URL")
+	}
+	if !strings.Contains(err.Error(), "://typo") {
+		t.Errorf("error %q does not quote the offending entry", err)
+	}
+}
