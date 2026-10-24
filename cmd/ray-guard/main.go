@@ -71,6 +71,18 @@ func run() int {
 		}
 	}
 
+	// Clamp before probing, not after: past this point every extra host in
+	// flight costs descriptors we do not have, and the failure mode is a
+	// quietly weaker report rather than an error (see MaxHostConcurrency).
+	if max := scan.MaxHostConcurrency(checks); max > 0 && *concurrency > max {
+		fmt.Fprintf(os.Stderr,
+			"notice: -concurrency %d exceeds what this host's open-file limit allows; using %d.\n"+
+				"        Raise it with `ulimit -n` for a faster scan. Probing beyond the limit\n"+
+				"        does not fail loudly - it silently under-reports.\n",
+			*concurrency, max)
+		*concurrency = max
+	}
+
 	// Same reason as the output-path check below: an operator who mistyped one
 	// of five buckets should find out now, not from a stderr line in the
 	// middle of a sweep and a report that quietly omits something in scope.
@@ -107,22 +119,22 @@ func run() int {
 	scanner := scan.NewWithChecks(*timeout, checks)
 	ctx, stopSignals := interruptible()
 	defer stopSignals()
-	observations, hosts, interrupted := probeAll(ctx, scanner, targets, buckets, *concurrency)
+	sweep := probeAll(ctx, scanner, targets, buckets, *concurrency)
 
-	findings := scan.Detect(observations)
-	requested := len(targets) + len(buckets)
-	// Deliberately not clever: a signal is taken at face value even when every
-	// target happens to have been recorded anyway. "All hosts recorded" is not
-	// proof of coverage - a host counts as responded as soon as one port
-	// answers, so the last host probed may have had ports cut short. Trading a
-	// withheld grade on a scan that finished in the same instant for a
-	// possible false all-clear is the wrong way round.
-	var result domain.ScanResult
-	if interrupted {
-		result = domain.NewPartialScanResult(start, time.Now(), requested, hosts, findings)
-	} else {
-		result = domain.NewScanResult(start, time.Now(), hosts, findings)
-	}
+	// Deliberately not clever about Interrupted: a signal is taken at face
+	// value even when every target happens to have been recorded anyway. "All
+	// hosts recorded" is not proof of coverage - a host counts as responded as
+	// soon as one port answers, so the last host probed may have had ports cut
+	// short. Trading a withheld grade on a scan that finished in the same
+	// instant for a possible false all-clear is the wrong way round.
+	result := domain.NewResult(domain.Run{
+		Start: start, End: time.Now(),
+		Requested:   len(targets) + len(buckets),
+		Hosts:       sweep.hosts,
+		Findings:    scan.Detect(sweep.observations),
+		Interrupted: sweep.interrupted,
+		ProbeErrors: sweep.probeErrors,
+	})
 	result.Label = strings.TrimSpace(*label)
 	// The vantage is part of the evidence: a month later, "three of twelve
 	// didn't answer" is only interpretable alongside where the scan ran from.
@@ -149,12 +161,23 @@ func run() int {
 	return result.ExitCode()
 }
 
-// probeAll fans out over targets and buckets, and reports whether it was cut
-// short. A cancelled context stops dispatch rather than racing through the
-// remaining targets: a probe we abandoned must not be recorded at all, because
-// "did not answer" is a claim about the customer's host and "we stopped" is a
-// claim about us.
-func probeAll(ctx context.Context, scanner *scan.Scanner, targets, buckets []string, concurrency int) ([]domain.Observation, []domain.HostSummary, bool) {
+// sweep is what one pass over the targets produced, including the two ways it
+// can be less than was asked for.
+type sweep struct {
+	observations []domain.Observation
+	hosts        []domain.HostSummary
+	interrupted  bool
+	// probeErrors counts probes that failed inside the scanner - the
+	// open-file or ephemeral-port limit - rather than telling us anything
+	// about a target.
+	probeErrors int
+}
+
+// probeAll fans out over targets and buckets. A cancelled context stops
+// dispatch rather than racing through the remaining targets: a probe we
+// abandoned must not be recorded at all, because "did not answer" is a claim
+// about the customer's host and "we stopped" is a claim about us.
+func probeAll(ctx context.Context, scanner *scan.Scanner, targets, buckets []string, concurrency int) sweep {
 	if concurrency < 1 {
 		concurrency = 1
 	}
@@ -163,6 +186,7 @@ func probeAll(ctx context.Context, scanner *scan.Scanner, targets, buckets []str
 	var wg sync.WaitGroup
 	var observations []domain.Observation
 	var hosts []domain.HostSummary
+	probeErrors := 0
 
 	for _, t := range targets {
 		if ctx.Err() != nil {
@@ -185,6 +209,7 @@ func probeAll(ctx context.Context, scanner *scan.Scanner, targets, buckets []str
 			mu.Lock()
 			observations = append(observations, hs.Observations...)
 			hosts = append(hosts, hs.Summary())
+			probeErrors += hs.ProbeErrors
 			mu.Unlock()
 		}()
 	}
@@ -201,7 +226,12 @@ func probeAll(ctx context.Context, scanner *scan.Scanner, targets, buckets []str
 			defer func() { <-sem }()
 			o, err := scanner.ProbeBucket(ctx, b)
 			if err != nil {
+				// The URL was validated before the scan started, so an error
+				// here is the scanner's own resource limit, not bad input.
 				fmt.Fprintln(os.Stderr, "bucket check:", err)
+				mu.Lock()
+				probeErrors++
+				mu.Unlock()
 				return
 			}
 			state := domain.HostResponded
@@ -220,7 +250,12 @@ func probeAll(ctx context.Context, scanner *scan.Scanner, targets, buckets []str
 
 	wg.Wait()
 	sort.Slice(hosts, func(i, j int) bool { return hosts[i].Host < hosts[j].Host })
-	return observations, hosts, ctx.Err() != nil
+	return sweep{
+		observations: observations,
+		hosts:        hosts,
+		interrupted:  ctx.Err() != nil,
+		probeErrors:  probeErrors,
+	}
 }
 
 // interruptible returns a context cancelled by Ctrl-C, so a scan stopped in

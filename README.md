@@ -89,12 +89,37 @@ Wire it into your own CI — the exit code encodes the worst severity found.
 | 4 | Worst finding was medium |
 | 5 | Worst finding was high |
 | 6 | Worst finding was critical |
-| 7 | **Inconclusive** — no target responded, so nothing was verified |
+| 7 | **No grade** — nothing responded, or the scan's own probes failed; nothing was reliably verified |
 | 130 | **Interrupted** — Ctrl-C; the scan did not finish (128 + SIGINT) |
 
-Exit 7 is deliberately non-zero. A scan that reached nothing proves nothing,
-however empty its finding list — if your targets move or DNS changes, the
-pipeline should fail rather than pass green forever on a scan of nowhere.
+Exit 7 is deliberately non-zero, and it outranks the severity codes: a scan
+that reached nothing proves nothing, however empty its finding list — if your
+targets move or DNS changes, the pipeline should fail rather than pass green
+forever on a scan of nowhere.
+
+### Resource limits — why a scan can be slower than you expect
+
+`-concurrency` is clamped to what the open-file limit on *your* machine can
+sustain (roughly `ulimit -n / 2 × ports probed`), and the scanner says so when
+it clamps. Raise the limit for a faster scan:
+
+```bash
+ulimit -n 4096 && ray-guard -cidr 10.0.0.0/24 -concurrency 128
+```
+
+This is not tidiness. Probing past the descriptor limit does not fail loudly —
+it **silently under-reports**, because dials start failing for local reasons
+and a failed dial looks like a quiet port. Measured against a live cluster
+with the limit at 128: the scan graded **C with 3 findings** where a healthy
+run graded **F with 19**, and an unauthenticated Ray dashboard was reported as
+an unidentified service.
+
+If a probe does fail that way, the port is reported as *not assessed* rather
+than as closed or unidentified, the run is marked degraded — no clean grade,
+a banner naming the cause and the fix, exit 7 — and the affected hosts are
+listed as scanner-side failures, not as unreachable hosts. The two have
+opposite remedies: one is a question for the customer, the other is one
+command on your own machine.
 
 ### Stopping a scan
 

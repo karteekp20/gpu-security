@@ -277,7 +277,15 @@ func TestScanResultCarriesVersion(t *testing.T) {
 
 func partialResult(requested int, hosts []HostSummary, findings ...Finding) ScanResult {
 	start := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
-	return NewPartialScanResult(start, start.Add(time.Second), requested, hosts, findings)
+	return NewResult(Run{Start: start, End: start.Add(time.Second), Requested: requested,
+		Hosts: hosts, Findings: findings, Interrupted: true})
+}
+
+// degradedResult is a run that finished but whose own probes failed part-way.
+func degradedResult(probeErrors int, hosts []HostSummary, findings ...Finding) ScanResult {
+	start := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
+	return NewResult(Run{Start: start, End: start.Add(time.Second), Requested: len(hosts),
+		Hosts: hosts, Findings: findings, ProbeErrors: probeErrors})
 }
 
 // TestInterruptedScanNeverGradesClean is the point of the whole change. A scan
@@ -378,5 +386,98 @@ func TestCompletedScanKeepsItsRequestedCount(t *testing.T) {
 	}
 	if r.Grade != "A+" || !r.Graded() {
 		t.Errorf("completed clean scan graded %s; the interrupted gate must not catch it", r.Grade)
+	}
+}
+
+// -----------------------------------------------------------------------------
+// Degraded scans — the scanner's own probes failed
+//
+// Measured, not hypothetical: with the open-file limit at 128, a /24 of the
+// demo cluster graded C with 3 findings where a healthy run graded F with 19,
+// and the unauthenticated Ray dashboard was reported as an unidentified
+// service on 8265. The report said nothing was wrong. That is the same family
+// of harm as the false all-clear, arrived at from a different direction.
+// -----------------------------------------------------------------------------
+
+func TestDegradedScanNeverGradesClean(t *testing.T) {
+	cases := []struct {
+		name     string
+		findings []Finding
+	}{
+		{"no findings at all", nil},
+		{"only info", []Finding{f("RG-EXPOSURE-001", Info, "host-a", 8080)}},
+		{"only low", []Finding{f("RG-TRITON-002", Low, "host-a", 8002)}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := degradedResult(7, responded("host-a", "host-b"), tc.findings...)
+			if r.Grade != GradeInconclusive {
+				t.Errorf("grade %s: a scan whose probes failed has not looked everywhere it claims", r.Grade)
+			}
+			if !r.Degraded() {
+				t.Error("Degraded() is false although probes failed")
+			}
+			if got := r.ExitCode(); got != 7 {
+				t.Errorf("exit code %d, want 7: an unreliable run must not pass a pipeline", got)
+			}
+		})
+	}
+}
+
+func TestDegradedScanStillReportsWhatItSaw(t *testing.T) {
+	r := degradedResult(3, responded("host-a"), f("RG-RAY-001", Critical, "host-a", 8265))
+	if r.Grade != "F" {
+		t.Errorf("grade = %s, want F: what the scan did observe, it observed", r.Grade)
+	}
+	if got := r.ExitCode(); got != 6 {
+		t.Errorf("exit code %d, want 6 (critical)", got)
+	}
+	for _, want := range []string{"floor", "3 probe(s) failed", "ulimit -n", "-concurrency"} {
+		if !strings.Contains(r.GradeReason, want) {
+			t.Errorf("grade reason does not mention %q: %q", want, r.GradeReason)
+		}
+	}
+}
+
+// TestProbeFailedHostsAreNotReportedAsSilent: the two look identical in an
+// empty finding list and have opposite remedies. One is "ask the customer
+// about that host", the other is "fix your own machine and re-run".
+func TestProbeFailedHostsAreNotReportedAsSilent(t *testing.T) {
+	start := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
+	hosts := []HostSummary{
+		{Host: "host-a", State: HostResponded},
+		{Host: "host-b", State: HostProbeFailed},
+		{Host: "host-c", State: HostNoResponse},
+		{Host: "host-d", State: HostUnresolved},
+	}
+	r := NewResult(Run{Start: start, End: start.Add(time.Second), Requested: len(hosts),
+		Hosts: hosts, ProbeErrors: 4})
+
+	if r.HostsProbeFailed != 1 {
+		t.Errorf("HostsProbeFailed = %d, want 1", r.HostsProbeFailed)
+	}
+	if r.HostsUnanswered != 1 {
+		t.Errorf("HostsUnanswered = %d, want 1: a probe failure is not a silent host", r.HostsUnanswered)
+	}
+	if r.HostsResponded != 1 || r.HostsUnresolved != 1 {
+		t.Errorf("other states miscounted: %+v", r)
+	}
+	if len(r.Unreachable) != 3 {
+		t.Errorf("Unreachable lists %d, want the 3 unassessed hosts", len(r.Unreachable))
+	}
+}
+
+// TestInterruptionOutranksDegradationInTheExplanation: both can be true, and
+// the operator who pressed Ctrl-C needs that said first - it is the thing they
+// did, and it explains the probe failures that cancellation itself can cause.
+func TestInterruptionOutranksDegradationInTheExplanation(t *testing.T) {
+	start := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
+	r := NewResult(Run{Start: start, End: start.Add(time.Second), Requested: 254,
+		Hosts: responded("host-a"), Interrupted: true, ProbeErrors: 2})
+	if !strings.Contains(r.GradeReason, "stopped before it finished") {
+		t.Errorf("reason leads with something other than the interruption: %q", r.GradeReason)
+	}
+	if r.ExitCode() != ExitInterrupted {
+		t.Errorf("exit code %d, want %d", r.ExitCode(), ExitInterrupted)
 	}
 }

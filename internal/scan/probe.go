@@ -131,6 +131,60 @@ func defaultChecks() []Check {
 // DefaultChecks returns the built-in probe set.
 func DefaultChecks() []Check { return defaultChecks() }
 
+// fdsPerHost is how many descriptors one host in flight can hold at once: each
+// distinct port is dialled in its own goroutine, and an open one then does a
+// TLS handshake and an HTTP request. Two per port is the honest ceiling.
+const fdsPerHost = 2
+
+// fdReserve leaves room for everything that is not a probe socket: stdio, the
+// report files, the resolver's sockets, and the Go runtime's own descriptors.
+const fdReserve = 64
+
+// MaxHostConcurrency returns the most hosts that can be probed at once without
+// the scan running the process out of file descriptors.
+//
+// This is not tidiness. Exceeding the limit does not make the scan fail, it
+// makes it *lie*: dials start failing for local reasons, and measured against
+// a real cluster with the limit at 128 the demo stack graded C with 3 findings
+// instead of F with 19, with the unauthenticated Ray dashboard reported as an
+// unidentified service. localResourceError now catches that and marks the run
+// degraded, but the better outcome is not to get there, so the scan is clamped
+// to what the host can actually sustain and the operator is told why.
+//
+// A machine whose limit is small enough to clamp hard (macOS defaults to a
+// 256 soft limit; containers are often lower) gets a slower, correct scan
+// rather than a fast, wrong one.
+func MaxHostConcurrency(checks []Check) int {
+	var rl syscall.Rlimit
+	if err := syscall.Getrlimit(syscall.RLIMIT_NOFILE, &rl); err != nil {
+		return 0 // unknown: impose no limit of our own
+	}
+	ports := map[int]bool{}
+	for _, c := range checks {
+		ports[c.Port] = true
+	}
+	perHost := len(ports) * fdsPerHost
+	if perHost < 1 {
+		perHost = 1
+	}
+	// rl.Cur can be RLIM_INFINITY (math.MaxUint64), which converts to a
+	// negative int and would clamp the scan to a single host at a time - the
+	// opposite of what an unlimited descriptor budget should mean. Cap it at a
+	// number we would never need instead. Caught by gosec (G115), which is the
+	// kind of bug that would have shown up as "the scan is mysteriously slow
+	// on exactly the machines with no limits".
+	const maxBudget = 1 << 20
+	cur := rl.Cur
+	if cur > maxBudget {
+		cur = maxBudget
+	}
+	budget := int(cur) - fdReserve
+	if budget < perHost {
+		return 1
+	}
+	return budget / perHost
+}
+
 // ApplyPortOverrides rewrites the default check set from a comma-separated
 // spec. Each element is either "service=port" (move a known service to a
 // non-default port) or a bare "port" (probe an extra port as an unidentified
@@ -217,6 +271,13 @@ type HostScan struct {
 	Host         string
 	State        domain.HostState
 	Observations []domain.Observation
+	// ProbeErrors counts ports whose probe failed inside the scanner - the
+	// process ran out of file descriptors or ephemeral ports - rather than
+	// because of anything the target did. Such a port yields no observation at
+	// all: we learned nothing about it, and a report that says "open, service
+	// unidentified" where the truth is "we could not look" understates the
+	// finding. See localResourceError.
+	ProbeErrors int
 }
 
 // Summary reduces the scan to its coverage record.
@@ -253,14 +314,21 @@ func (s *Scanner) ProbeHost(ctx context.Context, host string) HostScan {
 	var wg sync.WaitGroup
 	obs := make([][]domain.Observation, len(ports))
 	responded := false
+	probeErrors := 0
 	for i, port := range ports {
 		i, port := i, port
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			state := s.portState(ctx, host, port)
+			state, failed := s.portState(ctx, host, port)
 			mu.Lock()
 			defer mu.Unlock()
+			if failed {
+				// Our own limits, not the target's posture. Counting it is the
+				// only honest thing to do with it.
+				probeErrors++
+				return
+			}
 			// A refused connection is an answer: the host is alive and simply
 			// is not listening there. Only an all-timeout host is a blank.
 			if state == domain.PortOpen || state == domain.PortClosed {
@@ -269,13 +337,27 @@ func (s *Scanner) ProbeHost(ctx context.Context, host string) HostScan {
 			if state != domain.PortOpen {
 				return
 			}
-			obs[i] = s.probeOpenPort(ctx, host, port, byPort[port])
+			portObs, errs := s.probeOpenPort(ctx, host, port, byPort[port])
+			if errs > 0 {
+				// The port is open but we could not characterize what is on
+				// it. Dropping the observations costs a line on the report and
+				// keeps us from reporting Ray's dashboard as an unidentified
+				// service, which is what this used to do.
+				probeErrors += errs
+				return
+			}
+			obs[i] = portObs
 		}()
 	}
 	wg.Wait()
 
-	if responded {
+	result.ProbeErrors = probeErrors
+	switch {
+	case responded:
 		result.State = domain.HostResponded
+	case probeErrors > 0:
+		// Not "no response": we never managed to ask.
+		result.State = domain.HostProbeFailed
 	}
 	for _, o := range obs {
 		result.Observations = append(result.Observations, o...)
@@ -306,22 +388,57 @@ func (s *Scanner) resolves(ctx context.Context, host string) bool {
 // not from the host itself. Treating them as an answer would let an empty
 // subnet masquerade as a clean one - which is exactly the false all-clear this
 // whole distinction exists to prevent.
-func (s *Scanner) portState(ctx context.Context, host string, port int) domain.PortState {
+// It returns a second value: whether the dial failed for a reason local to the
+// scanner. That case is not a port state at all and must not be recorded as
+// one (localResourceError).
+func (s *Scanner) portState(ctx context.Context, host string, port int) (domain.PortState, bool) {
 	d := net.Dialer{Timeout: s.timeout}
 	conn, err := d.DialContext(ctx, "tcp", net.JoinHostPort(host, strconv.Itoa(port)))
 	if err == nil {
 		_ = conn.Close()
-		return domain.PortOpen
+		return domain.PortOpen, false
 	}
 	if errors.Is(err, syscall.ECONNREFUSED) {
-		return domain.PortClosed
+		return domain.PortClosed, false
 	}
-	return domain.PortFiltered
+	if localResourceError(err) {
+		return domain.PortFiltered, true
+	}
+	return domain.PortFiltered, false
 }
 
-func (s *Scanner) probeOpenPort(ctx context.Context, host string, port int, checks []Check) []domain.Observation {
-	tlsState := s.tlsProbe(ctx, host, port)
+// localResourceError reports whether an error is the scanner running out of
+// its own resources rather than the network saying something about the target.
+//
+// This distinction is the same one as "closed vs filtered", one layer in: a
+// dial that fails with EMFILE tells us about our file-descriptor limit and
+// nothing whatsoever about the host. Treating it as "filtered" is how a scan
+// silently under-reports - measured, not theorized. With the open-file limit
+// at 128, a /24 of the demo cluster graded C with 3 findings instead of F with
+// 19, and the unauthenticated Ray dashboard was reported as an unidentified
+// service on 8265, because the TCP dial succeeded and the HTTP GET did not.
+// Nothing in the report said anything had gone wrong.
+//
+// EADDRNOTAVAIL is included because ephemeral-port exhaustion produces the
+// same shape of failure from the same cause - probing faster than the local
+// stack can keep up.
+func localResourceError(err error) bool {
+	return errors.Is(err, syscall.EMFILE) ||
+		errors.Is(err, syscall.ENFILE) ||
+		errors.Is(err, syscall.ENOBUFS) ||
+		errors.Is(err, syscall.EADDRNOTAVAIL)
+}
+
+func (s *Scanner) probeOpenPort(ctx context.Context, host string, port int, checks []Check) ([]domain.Observation, int) {
+	tlsState, failed := s.tlsProbe(ctx, host, port)
+	if failed {
+		// Without knowing whether the port speaks TLS we cannot classify
+		// anything on it, and guessing "plaintext" would raise RG-TLS-002
+		// against a service that is in fact encrypted.
+		return nil, 1
+	}
 	var obs []domain.Observation
+	probeErrors := 0
 
 	if tlsState.Enabled && tlsState.Issue != "" {
 		obs = append(obs, domain.Observation{
@@ -343,7 +460,11 @@ func (s *Scanner) probeOpenPort(ctx context.Context, host string, port int, chec
 			})
 			continue
 		}
-		o := s.httpProbe(ctx, host, c, tlsState)
+		o, failed := s.httpProbe(ctx, host, c, tlsState)
+		if failed {
+			probeErrors++
+			continue
+		}
 		switch {
 		case o.Unauth:
 			identified = append(identified, o)
@@ -359,6 +480,13 @@ func (s *Scanner) probeOpenPort(ctx context.Context, host string, port int, chec
 				responded = &cp
 			}
 		}
+	}
+
+	if probeErrors > 0 {
+		// Any check on this port failed inside the scanner, so what we have is
+		// a partial view of a port we cannot characterize. Report nothing
+		// rather than the weakest thing we happened to see.
+		return nil, probeErrors
 	}
 
 	obs = append(obs, tcpOnly...)
@@ -386,7 +514,7 @@ func (s *Scanner) probeOpenPort(ctx context.Context, host string, port int, chec
 			TLS: tlsState, Note: "port open, no HTTP response",
 		})
 	}
-	return obs
+	return obs, 0
 }
 
 // needsWildcardControl reports whether any service claimed on this port makes
@@ -410,7 +538,7 @@ func needsWildcardControl(identified []domain.Observation) bool {
 // an answer we keep the attribution we already have, because silently
 // downgrading a real finding is the worse error.
 func (s *Scanner) answersAnything(ctx context.Context, host string, port int, tlsState domain.TLSState) bool {
-	o := s.httpProbe(ctx, host, Check{ServiceUnknown, port, "http", controlPath}, tlsState)
+	o, _ := s.httpProbe(ctx, host, Check{ServiceUnknown, port, "http", controlPath}, tlsState)
 	return o.Unauth
 }
 
@@ -445,17 +573,19 @@ func (s *Scanner) handshakeTimeout() time.Duration {
 // ourselves, so we can report *why* verification failed rather than just
 // "no TLS". We record only whether TLS is on, the failure class, and the
 // expiry date - never the subject, issuer CN, serial, or chain bytes (P3).
-func (s *Scanner) tlsProbe(ctx context.Context, host string, port int) domain.TLSState {
+// It returns a second value: whether the handshake failed for a reason local
+// to the scanner, in which case the result says nothing about the port.
+func (s *Scanner) tlsProbe(ctx context.Context, host string, port int) (domain.TLSState, bool) {
 	d := &net.Dialer{Timeout: s.handshakeTimeout()}
 	conn, err := tls.DialWithDialer(d, "tcp", net.JoinHostPort(host, strconv.Itoa(port)),
 		&tls.Config{InsecureSkipVerify: true})
 	if err != nil {
-		return domain.TLSState{Enabled: false}
+		return domain.TLSState{Enabled: false}, localResourceError(err)
 	}
 	defer func() { _ = conn.Close() }()
 	certs := conn.ConnectionState().PeerCertificates
 	if len(certs) == 0 {
-		return domain.TLSState{Enabled: true}
+		return domain.TLSState{Enabled: true}, false
 	}
 	leaf := certs[0]
 	state := domain.TLSState{Enabled: true, NotAfter: leaf.NotAfter.UTC().Format("2006-01-02")}
@@ -473,7 +603,7 @@ func (s *Scanner) tlsProbe(ctx context.Context, host string, port int) domain.TL
 	}); verr != nil {
 		state.Issue = classifyTLSError(verr, leaf)
 	}
-	return state
+	return state, false
 }
 
 func classifyTLSError(err error, leaf *x509.Certificate) string {
@@ -503,8 +633,11 @@ func classifyTLSError(err error, leaf *x509.Certificate) string {
 // whether the service answered without requiring auth. It sends no body, uses
 // no method other than GET, and discards the response body without inspecting
 // it. Status code and headers-level facts only - never content (P3).
-func (s *Scanner) httpProbe(ctx context.Context, host string, c Check, tlsState domain.TLSState) domain.Observation {
+// It returns a second value: whether the request failed for a reason local to
+// the scanner, which is not a fact about the service.
+func (s *Scanner) httpProbe(ctx context.Context, host string, c Check, tlsState domain.TLSState) (domain.Observation, bool) {
 	o := domain.Observation{Host: host, Port: c.Port, Service: c.Service, State: domain.PortOpen, TLS: tlsState}
+	failed := false
 
 	schemes := []string{"http"}
 	if tlsState.Enabled {
@@ -523,6 +656,9 @@ func (s *Scanner) httpProbe(ctx context.Context, host string, c Check, tlsState 
 		}
 		resp, err := client.Do(req)
 		if err != nil {
+			if localResourceError(err) {
+				failed = true
+			}
 			continue
 		}
 		// Drain a bounded amount and discard. The body is never inspected,
@@ -535,10 +671,10 @@ func (s *Scanner) httpProbe(ctx context.Context, host string, c Check, tlsState 
 		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 			o.Note = "reachable but requires auth"
 		}
-		return o
+		return o, false
 	}
 	o.Note = "no HTTP response"
-	return o
+	return o, failed
 }
 
 // ValidateBucketURL reports whether a -buckets entry is probeable at all. It
@@ -581,6 +717,9 @@ func (s *Scanner) ProbeBucket(ctx context.Context, raw string) (domain.Observati
 	req.Header.Set("User-Agent", "ray-guard/"+domain.Version+" (+benign posture probe)")
 	resp, err := s.client.Do(req)
 	if err != nil {
+		if localResourceError(err) {
+			return domain.Observation{}, fmt.Errorf("bucket %s: probe failed locally (file-descriptor or ephemeral-port limit): %w", u.Host, err)
+		}
 		o.Note = "bucket endpoint unreachable"
 		return o, nil
 	}

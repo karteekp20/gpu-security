@@ -213,8 +213,9 @@ func TestWriteEmitsBothArtifacts(t *testing.T) {
 // who opens the HTML afterwards.
 func interruptedFixture() domain.ScanResult {
 	full := fixture()
-	r := domain.NewPartialScanResult(full.StartedAt, full.CompletedAt, 254,
-		respondedHosts("10.0.0.5", "10.0.0.6", "10.0.0.7", "10.0.0.8"), full.Findings)
+	r := domain.NewResult(domain.Run{Start: full.StartedAt, End: full.CompletedAt, Requested: 254,
+		Hosts:    respondedHosts("10.0.0.5", "10.0.0.6", "10.0.0.7", "10.0.0.8"),
+		Findings: full.Findings, Interrupted: true})
 	r.Label = full.Label
 	r.ScannedFrom = full.ScannedFrom
 	return r
@@ -249,8 +250,8 @@ func TestInterruptedHTMLSaysSoBeforeTheFindings(t *testing.T) {
 // catastrophic finding and a "100/100" as a pass. Neither is true.
 func TestInterruptedCleanScanShowsNoScore(t *testing.T) {
 	start := time.Date(2026, 9, 20, 14, 0, 0, 0, time.UTC)
-	r := domain.NewPartialScanResult(start, start.Add(2*time.Second), 254,
-		respondedHosts("10.0.0.5"), nil)
+	r := domain.NewResult(domain.Run{Start: start, End: start.Add(2 * time.Second),
+		Requested: 254, Hosts: respondedHosts("10.0.0.5"), Interrupted: true})
 	html := renderString(t, r)
 	if strings.Contains(html, "Score ") {
 		t.Error("a score is rendered for an interrupted scan with nothing to grade")
@@ -270,5 +271,80 @@ func TestInterruptedCleanScanShowsNoScore(t *testing.T) {
 	}
 	if !strings.Contains(out, "Do not read this as a clean result") {
 		t.Errorf("terminal summary does not warn against reading it as clean:\n%s", out)
+	}
+}
+
+// degradedFixture is a run whose own probes failed part-way: the shape a scan
+// takes when the machine it runs from is out of file descriptors.
+func degradedFixture() domain.ScanResult {
+	full := fixture()
+	hosts := respondedHosts("10.0.0.5", "10.0.0.6")
+	hosts = append(hosts, domain.HostSummary{Host: "10.0.0.7", State: domain.HostProbeFailed})
+	r := domain.NewResult(domain.Run{Start: full.StartedAt, End: full.CompletedAt,
+		Requested: 3, Hosts: hosts, Findings: full.Findings, ProbeErrors: 11})
+	r.Label = full.Label
+	r.ScannedFrom = full.ScannedFrom
+	return r
+}
+
+func TestGoldenDegradedHTML(t *testing.T) {
+	var buf bytes.Buffer
+	if err := RenderHTML(&buf, degradedFixture()); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	goldenCheck(t, "degraded.golden.html", buf.Bytes())
+}
+
+// TestDegradedHTMLNamesTheCauseAndTheFix. The whole value of surfacing this is
+// that the operator can act on it in one command; a banner that said only
+// "results may be incomplete" would send them back to the customer instead of
+// to their own shell.
+func TestDegradedHTMLNamesTheCauseAndTheFix(t *testing.T) {
+	html := renderString(t, degradedFixture())
+	banner := strings.Index(html, "under-reports")
+	if banner < 0 {
+		t.Fatal("no degradation notice in the report")
+	}
+	if findings := strings.Index(html, "Fix these first"); banner > findings {
+		t.Error("the degradation notice comes after the findings list")
+	}
+	for _, want := range []string{"11 probe(s) failed", "ulimit -n", "-concurrency",
+		"not a finding about the targets"} {
+		if !strings.Contains(html, want) {
+			t.Errorf("the notice does not mention %q", want)
+		}
+	}
+}
+
+// TestProbeFailedHostIsExplainedCorrectly: listing it as "no response
+// (firewalled, powered off...)" would point the operator at the customer's
+// network for a problem on their own machine.
+func TestProbeFailedHostIsExplainedCorrectly(t *testing.T) {
+	html := renderString(t, degradedFixture())
+	i := strings.Index(html, "10.0.0.7")
+	if i < 0 {
+		t.Fatal("the probe-failed host is not listed in the coverage section")
+	}
+	end := i + 220
+	if end > len(html) {
+		end = len(html)
+	}
+	entry := html[i:end]
+	if !strings.Contains(entry, "scanner's own probes failed") {
+		t.Errorf("the host is not explained as a scanner-side failure: %q", entry)
+	}
+	if strings.Contains(entry, "firewalled") {
+		t.Errorf("the host is blamed on the customer's network: %q", entry)
+	}
+}
+
+func TestPrintSummaryWarnsAboutProbeFailures(t *testing.T) {
+	var buf bytes.Buffer
+	PrintSummary(&buf, degradedFixture())
+	out := buf.String()
+	for _, want := range []string{"WARNING", "under-reports", "ulimit -n", "1 probe failures"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("terminal summary does not mention %q:\n%s", want, out)
+		}
 	}
 }

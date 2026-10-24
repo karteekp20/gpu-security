@@ -50,7 +50,11 @@ type Snapshot struct {
 	// covered what it set out to: averaging partial scans in would understate
 	// exposure, because the targets that went unprobed cannot contribute
 	// findings.
-	Interrupted       bool           `json:"interrupted"`
+	Interrupted bool `json:"interrupted"`
+	// Degraded marks a run during which the scanner's own probes failed, which
+	// makes its finding counts a floor rather than a measurement. Same reason
+	// as Interrupted: the index has to be able to leave it out.
+	Degraded          bool           `json:"degraded"`
 	HostsWithFindings int            `json:"hosts_with_findings"`
 	Grade             domain.Grade   `json:"grade"`
 	Score             int            `json:"score"`
@@ -100,6 +104,7 @@ func Build(r domain.ScanResult, now time.Time) (Snapshot, error) {
 		HostsResponded:    r.HostsResponded,
 		Inconclusive:      r.Inconclusive(),
 		Interrupted:       r.Interrupted,
+		Degraded:          r.Degraded(),
 		HostsWithFindings: r.HostsWithFindings,
 		Grade:             r.Grade,
 		Score:             r.Score,

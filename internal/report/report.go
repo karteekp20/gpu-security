@@ -165,8 +165,10 @@ func PrintSummary(w io.Writer, r domain.ScanResult) {
 	switch {
 	case r.Inconclusive():
 		fmt.Fprintf(w, "Grade: %s - INCONCLUSIVE\n", v.Grade)
-	case !r.Graded():
+	case !r.Graded() && r.Interrupted:
 		fmt.Fprintf(w, "Grade: %s - INCOMPLETE (scan interrupted)\n", v.Grade)
+	case !r.Graded():
+		fmt.Fprintf(w, "Grade: %s - UNRELIABLE (%d probe(s) failed in the scanner)\n", v.Grade, r.ProbeErrors)
 	default:
 		fmt.Fprintf(w, "Grade: %s (score %d/100)\n", v.Grade, v.Score)
 	}
@@ -180,9 +182,13 @@ func PrintSummary(w io.Writer, r domain.ScanResult) {
 		fmt.Fprintf(w, "Targets scanned: %d   Responded: %d   Hosts with findings: %d\n",
 			v.TargetsScanned, v.HostsResponded, v.HostsWithFindings)
 	}
-	if v.HostsUnanswered > 0 || v.HostsUnresolved > 0 {
-		fmt.Fprintf(w, "Not assessed: %d no response, %d unresolved\n",
-			v.HostsUnanswered, v.HostsUnresolved)
+	if v.HostsUnanswered > 0 || v.HostsUnresolved > 0 || v.HostsProbeFailed > 0 {
+		fmt.Fprintf(w, "Not assessed: %d no response, %d unresolved, %d probe failures\n",
+			v.HostsUnanswered, v.HostsUnresolved, v.HostsProbeFailed)
+	}
+	if r.Degraded() {
+		fmt.Fprintf(w, "WARNING: %d probe(s) failed inside the scanner, so this scan under-reports.\n"+
+			"         Lower -concurrency or raise `ulimit -n`, then re-run.\n", r.ProbeErrors)
 	}
 	for _, c := range v.SevCounts {
 		fmt.Fprintf(w, "  %-8s %d\n", c.Severity, c.Count)
@@ -195,6 +201,9 @@ func PrintSummary(w io.Writer, r domain.ScanResult) {
 			fmt.Fprintf(w, "\nNo findings on the %d target(s) probed before the scan was stopped.\n"+
 				"The other %d were not assessed. Do not read this as a clean result.\n",
 				v.TargetsScanned, v.TargetsRequested-v.TargetsScanned)
+		case r.Degraded():
+			fmt.Fprintf(w, "\nNo findings - but the scanner's own probes failed %d time(s), so this\n"+
+				"is not a clean result. Fix the limit and re-run.\n", r.ProbeErrors)
 		default:
 			fmt.Fprintf(w, "\nNo exposure findings on the scanned targets.\n")
 		}
@@ -328,13 +337,23 @@ Re-run the scan to completion before treating it as an assessment.</p>
 </div>
 {{end}}
 
+{{if .Degraded}}
+<div class="warn">
+<p><strong>This scan under-reports &mdash; {{.ProbeErrors}} probe(s) failed inside the scanner.</strong>
+Those probes never reached a conclusion, so services may be running on ports this report says
+nothing about. This is a limit on the machine the scan ran from, not a finding about the targets:
+almost always the open-file limit. Lower <code>-concurrency</code> or raise <code>ulimit -n</code>,
+then re-run. What is listed below was still observed; what is missing proves nothing.</p>
+</div>
+{{end}}
+
 {{if .UnreachableShown}}
 <div class="warn">
 <p><strong>Coverage gap &mdash; {{len .Unreachable}} target(s) were not assessed.</strong>
 {{if .Inconclusive}}Nothing responded, so this scan verified nothing. Do not read it as a clean
 result.{{else}}The grade above covers only the targets that responded.{{end}}</p>
 <ul>
-{{range .UnreachableShown}}<li><code>{{.Host}}</code> &mdash; {{if eq .State "unresolved"}}name could not be resolved{{else}}no response (firewalled, powered off, or unreachable from here){{end}}</li>
+{{range .UnreachableShown}}<li><code>{{.Host}}</code> &mdash; {{if eq .State "unresolved"}}name could not be resolved{{else if eq .State "probe-failed"}}not assessed: the scanner's own probes failed here (local resource limit){{else}}no response (firewalled, powered off, or unreachable from here){{end}}</li>
 {{end}}{{if .UnreachableExtra}}<li>&hellip; and {{.UnreachableExtra}} more (see <code>report.json</code>)</li>{{end}}</ul>
 </div>
 {{end}}

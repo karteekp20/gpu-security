@@ -71,6 +71,13 @@ const (
 	HostNoResponse HostState = "no-response"
 	// HostUnresolved means DNS lookup failed - we never reached the network.
 	HostUnresolved HostState = "unresolved"
+	// HostProbeFailed means our own probes failed - the scanner ran out of
+	// file descriptors or ephemeral ports - so we never managed to ask. It is
+	// deliberately distinct from HostNoResponse: "firewalled, powered off, or
+	// unreachable" is a statement about the customer's host, and this is a
+	// statement about the machine the scan ran from. The remedies differ too,
+	// which is the practical reason an operator needs to see the difference.
+	HostProbeFailed HostState = "probe-failed"
 )
 
 // HostSummary is the per-target coverage record behind the scan's headline.
@@ -134,10 +141,16 @@ type ScanResult struct {
 	// evidence - but the absence of a finding proves nothing about a target
 	// that was never probed, so an interrupted scan can never earn a clean
 	// grade.
-	Interrupted       bool             `json:"interrupted,omitempty"`
+	Interrupted bool `json:"interrupted,omitempty"`
+	// ProbeErrors counts probes that failed inside the scanner rather than
+	// telling us anything about a target: the open-file or ephemeral-port
+	// limit. Any non-zero value means the measurement itself is unreliable, so
+	// it gates clean grades exactly as Interrupted does.
+	ProbeErrors       int              `json:"probe_errors,omitempty"`
 	HostsResponded    int              `json:"hosts_responded"`
 	HostsUnanswered   int              `json:"hosts_unanswered"`
 	HostsUnresolved   int              `json:"hosts_unresolved"`
+	HostsProbeFailed  int              `json:"hosts_probe_failed,omitempty"`
 	Unreachable       []HostSummary    `json:"unreachable,omitempty"`
 	HostsWithFindings int              `json:"hosts_with_findings"`
 	Findings          []Finding        `json:"findings"`
@@ -151,6 +164,11 @@ type ScanResult struct {
 // reached nothing proves nothing, however empty its finding list.
 func (r ScanResult) Inconclusive() bool { return r.HostsResponded == 0 }
 
+// Degraded reports whether the scanner's own probes failed during the run. A
+// degraded scan may still have found real exposure - what it saw, it saw - but
+// what it did not see proves nothing, because some of the looking failed.
+func (r ScanResult) Degraded() bool { return r.ProbeErrors > 0 }
+
 // Graded reports whether the run produced a gradeable verdict. It is false
 // both when nothing responded and when an interrupted scan found nothing worth
 // grading - in neither case is a score meaningful, and showing one anyway is
@@ -163,21 +181,34 @@ func (r ScanResult) PartialCoverage() bool {
 	return r.HostsResponded > 0 && (r.HostsUnanswered > 0 || r.HostsUnresolved > 0)
 }
 
-// NewScanResult records a run that covered everything it was asked to.
+// Run is one execution of the scanner as the scanner saw it: what it was asked
+// to cover, what came back, and the two ways coverage can be less than it
+// looks - the operator stopped it, or our own probes failed.
+//
+// Targets that were never probed belong in neither Hosts nor Unreachable:
+// Requested is how their absence is accounted for. "We stopped" and "it did
+// not answer" are different facts, and only one of them is about the customer.
+type Run struct {
+	Start, End time.Time
+	// Requested is what the operator asked for: targets plus buckets.
+	Requested   int
+	Hosts       []HostSummary
+	Findings    []Finding
+	Interrupted bool
+	ProbeErrors int
+}
+
+// NewScanResult records a run that finished and covered everything it was
+// asked to. Anything less complete goes through NewResult with a Run.
 func NewScanResult(start, end time.Time, hosts []HostSummary, findings []Finding) ScanResult {
-	return newResult(start, end, len(hosts), false, hosts, findings)
+	return NewResult(Run{Start: start, End: end, Requested: len(hosts), Hosts: hosts, Findings: findings})
 }
 
-// NewPartialScanResult records a run that was stopped before it covered what it
-// was asked to: requested is what the operator asked for, hosts is what was
-// actually attempted. Targets that were never probed are deliberately absent
-// from hosts rather than listed as unreachable - "we stopped" and "it did not
-// answer" are different facts, and only one of them is about the customer.
-func NewPartialScanResult(start, end time.Time, requested int, hosts []HostSummary, findings []Finding) ScanResult {
-	return newResult(start, end, requested, true, hosts, findings)
-}
-
-func newResult(start, end time.Time, requested int, interrupted bool, hosts []HostSummary, findings []Finding) ScanResult {
+// NewResult scores a run. A run that was interrupted, or during which the
+// scanner's own probes failed, cannot reach a clean grade: see gradeFor.
+func NewResult(run Run) ScanResult {
+	start, end, requested := run.Start, run.End, run.Requested
+	hosts, findings := run.Hosts, run.Findings
 	summary := map[Severity]int{}
 	affected := map[string]struct{}{}
 	for _, f := range findings {
@@ -190,7 +221,8 @@ func newResult(start, end time.Time, requested int, interrupted bool, hosts []Ho
 		StartedAt:      start, CompletedAt: end,
 		TargetsRequested:  requested,
 		TargetsScanned:    len(hosts),
-		Interrupted:       interrupted,
+		Interrupted:       run.Interrupted,
+		ProbeErrors:       run.ProbeErrors,
 		HostsWithFindings: len(affected),
 		Findings:          findings, Summary: summary,
 	}
@@ -201,13 +233,16 @@ func newResult(start, end time.Time, requested int, interrupted bool, hosts []Ho
 		case HostUnresolved:
 			r.HostsUnresolved++
 			r.Unreachable = append(r.Unreachable, h)
+		case HostProbeFailed:
+			r.HostsProbeFailed++
+			r.Unreachable = append(r.Unreachable, h)
 		default:
 			r.HostsUnanswered++
 			r.Unreachable = append(r.Unreachable, h)
 		}
 	}
 
-	r.Score, r.Grade = gradeFor(summary, r.HostsResponded, !interrupted)
+	r.Score, r.Grade = gradeFor(summary, r.HostsResponded, !run.Interrupted && run.ProbeErrors == 0)
 	r.GradeReason = gradeReason(r.Grade, findings, r)
 	return r
 }
@@ -241,6 +276,9 @@ func gradeFor(s map[Severity]int, responded int, complete bool) (int, Grade) {
 func gradeReason(g Grade, findings []Finding, r ScanResult) string {
 	if r.Interrupted {
 		return interruptedReason(g, findings, r)
+	}
+	if r.Degraded() {
+		return degradedReason(g, findings, r)
 	}
 	switch g {
 	case GradeInconclusive:
@@ -298,6 +336,24 @@ func interruptedReason(g Grade, findings []Finding, r ScanResult) string {
 	return "The scan was stopped before it finished, so this is a floor and not " +
 		"a verdict (" + coverage + "). What was observed: " + worst.Title +
 		". Worse exposure may exist on the targets that were not probed."
+}
+
+// degradedReason explains a run whose own probes failed. The remedy is local
+// and specific, so it is stated: this is almost always the open-file limit,
+// and the operator can fix it in one command and re-run.
+func degradedReason(g Grade, findings []Finding, r ScanResult) string {
+	const remedy = "This is the scanner hitting a local limit, not a finding about the " +
+		"targets: lower -concurrency or raise the open-file limit (ulimit -n), then re-run."
+	count := fmt.Sprintf("%d probe(s) failed inside the scanner", r.ProbeErrors)
+	if g == GradeInconclusive {
+		return "No grade: " + count + ", so these results are unreliable. " + remedy
+	}
+	worst := WorstFinding(findings)
+	if worst == nil {
+		return count + ". " + remedy
+	}
+	return "Treat this as a floor, not a verdict: " + count + ", so exposure may have " +
+		"been missed. What was observed: " + worst.Title + ". " + remedy
 }
 
 var sevOrder = []Severity{Critical, High, Medium, Low, Info}
@@ -362,6 +418,13 @@ func (r ScanResult) ExitCode() int {
 	switch {
 	case r.Interrupted:
 		return ExitInterrupted
+	case !r.Graded():
+		// No grade, for any of the reasons there are: nothing responded, or
+		// the measurement was unreliable. It sits above the severity codes
+		// because those answer "how bad is this cluster" and read as a
+		// complete verdict; a run with no grade has not earned one. Either way
+		// a pipeline must not pass.
+		return 7
 	case r.Summary[Critical] > 0:
 		return 6
 	case r.Summary[High] > 0:
@@ -370,8 +433,6 @@ func (r ScanResult) ExitCode() int {
 		return 4
 	case r.Summary[Low] > 0 || r.Summary[Info] > 0:
 		return 3
-	case r.Inconclusive():
-		return 7
 	default:
 		return 0
 	}

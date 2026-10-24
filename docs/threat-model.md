@@ -181,7 +181,19 @@ pipeline scans a moved target would pass green indefinitely.
   as unreachable, and a probe abandoned mid-flight is discarded rather than
   recorded. "We stopped" is a fact about the scanner; "it did not answer" is a
   fact about the customer's host, and the report must not confuse them.
-- The benchmark snapshot carries both flags, so the aggregate index can
+- A probe that fails **inside the scanner** - the open-file or ephemeral-port
+  limit - is not recorded as a port state at all. Such a port yields no
+  observation, the host is reported as `probe-failed` rather than
+  "no response (firewalled, powered off...)", and the run is marked degraded:
+  no clean grade, a banner naming the cause and the one-command fix, exit 7.
+  This was measured, not theorized: with the limit at 128, a /24 of the demo
+  cluster graded **C with 3 findings** where a healthy run graded **F with
+  19**, and the unauthenticated Ray dashboard appeared as an unidentified
+  service on 8265. Nothing in the report said anything had gone wrong.
+- `-concurrency` is clamped to what the local descriptor limit sustains, so
+  the degraded path is the backstop rather than the normal case. A constrained
+  machine gets a slower correct scan instead of a fast wrong one.
+- The benchmark snapshot carries all three flags, so the aggregate index can
   exclude a run that never covered what it set out to.
 
 **Residual risk.** A firewalled-but-healthy host is indistinguishable from an

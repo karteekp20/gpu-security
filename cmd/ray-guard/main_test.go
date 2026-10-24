@@ -94,10 +94,11 @@ func TestProbeAllRecordsNothingItAbandoned(t *testing.T) {
 	cancel()
 
 	scanner := scan.New(50 * time.Millisecond)
-	obs, hosts, interrupted := probeAll(ctx, scanner,
+	got := probeAll(ctx, scanner,
 		[]string{"127.0.0.1", "localhost"}, []string{"https://example.invalid/bucket"}, 4)
+	obs, hosts := got.observations, got.hosts
 
-	if !interrupted {
+	if !got.interrupted {
 		t.Error("interrupted = false after scanning under a cancelled context")
 	}
 	if len(hosts) != 0 {
@@ -140,10 +141,11 @@ func TestProbeAllStopsDispatchingOnInterrupt(t *testing.T) {
 
 	// concurrency 1 serializes dispatch, so "the first target is probed and
 	// the rest are not" is a deterministic assertion rather than a race.
-	_, hosts, interrupted := probeAll(ctx, scanner,
+	got := probeAll(ctx, scanner,
 		[]string{"127.0.0.1", "127.0.0.2", "127.0.0.3", "127.0.0.4"}, nil, 1)
+	hosts := got.hosts
 
-	if !interrupted {
+	if !got.interrupted {
 		t.Fatal("interrupted = false although the scan was cancelled mid-flight")
 	}
 	if len(hosts) != 1 {
@@ -162,8 +164,9 @@ func TestProbeAllStopsDispatchingOnInterrupt(t *testing.T) {
 func TestProbeAllCompletesNormally(t *testing.T) {
 	scanner := scan.NewWithChecks(2*time.Second,
 		[]scan.Check{{Service: "ray-dashboard", Port: 59231, Scheme: "http", Path: "/"}})
-	_, hosts, interrupted := probeAll(context.Background(), scanner, []string{"127.0.0.1"}, nil, 4)
-	if interrupted {
+	got := probeAll(context.Background(), scanner, []string{"127.0.0.1"}, nil, 4)
+	hosts := got.hosts
+	if got.interrupted {
 		t.Error("interrupted = true on a scan nobody interrupted")
 	}
 	if len(hosts) != 1 || hosts[0].State != domain.HostResponded {

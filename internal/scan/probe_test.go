@@ -5,9 +5,12 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -161,7 +164,7 @@ func TestTLSProbeClassifiesUntrustedCertificate(t *testing.T) {
 	port, _ := strconv.Atoi(portStr)
 
 	s := NewWithChecks(3*time.Second, nil)
-	state := s.tlsProbe(context.Background(), host, port)
+	state, _ := s.tlsProbe(context.Background(), host, port)
 	if !state.Enabled {
 		t.Fatal("expected TLS to be detected")
 	}
@@ -180,7 +183,7 @@ func TestTLSProbeRecordsNoCertificateIdentity(t *testing.T) {
 	host, portStr, _ := net.SplitHostPort(srv.Listener.Addr().String())
 	port, _ := strconv.Atoi(portStr)
 
-	state := NewWithChecks(3*time.Second, nil).tlsProbe(context.Background(), host, port)
+	state, _ := NewWithChecks(3*time.Second, nil).tlsProbe(context.Background(), host, port)
 	for _, leaked := range []string{"CN=", "O=", "Acme"} {
 		if strings.Contains(state.Issue+state.NotAfter, leaked) {
 			t.Errorf("TLS state leaked certificate identity (%q)", leaked)
@@ -217,7 +220,7 @@ func TestTLSProbeGivesUpQuicklyOnAcceptAndHang(t *testing.T) {
 	s := NewWithChecks(probeTimeout, nil)
 
 	start := time.Now()
-	state := s.tlsProbe(context.Background(), "127.0.0.1", port)
+	state, _ := s.tlsProbe(context.Background(), "127.0.0.1", port)
 	elapsed := time.Since(start)
 
 	if state.Enabled {
@@ -250,7 +253,7 @@ func TestHandshakeTimeoutIsClamped(t *testing.T) {
 
 func TestTLSProbeOnPlaintextPort(t *testing.T) {
 	host, port := serve(t, func(w http.ResponseWriter, r *http.Request) {})
-	state := NewWithChecks(2*time.Second, nil).tlsProbe(context.Background(), host, port)
+	state, _ := NewWithChecks(2*time.Second, nil).tlsProbe(context.Background(), host, port)
 	if state.Enabled {
 		t.Errorf("a plaintext HTTP port must not be reported as TLS-enabled: %+v", state)
 	}
@@ -427,14 +430,71 @@ func TestPortStateDistinguishesClosedFromFiltered(t *testing.T) {
 	port, _ := strconv.Atoi(portStr)
 	_ = l.Close()
 
-	if got := s.portState(context.Background(), "127.0.0.1", port); got != domain.PortClosed {
+	got, failed := s.portState(context.Background(), "127.0.0.1", port)
+	if got != domain.PortClosed {
 		t.Errorf("loopback with nothing listening should be closed, got %s", got)
+	}
+	if failed {
+		t.Error("a refused connection was reported as a local probe failure")
 	}
 
 	// 198.51.100.0/24 is TEST-NET-2: reserved for documentation, so packets
 	// are dropped rather than refused.
-	if got := s.portState(context.Background(), "198.51.100.1", 8265); got != domain.PortFiltered {
-		t.Logf("TEST-NET-2 returned %s (network-dependent; not asserted)", got)
+	if got, failed := s.portState(context.Background(), "198.51.100.1", 8265); got != domain.PortFiltered {
+		t.Logf("TEST-NET-2 returned %s (failed=%v; network-dependent, not asserted)", got, failed)
+	}
+}
+
+// TestLocalResourceErrorsAreNotPortStates is the classifier behind the
+// difference between "the host told us something" and "we ran out of
+// descriptors". Getting this wrong is not a cosmetic bug: it is how a scan
+// silently under-reports, because every local failure then looks like a
+// filtered port on a quiet host.
+func TestLocalResourceErrorsAreNotPortStates(t *testing.T) {
+	local := []error{syscall.EMFILE, syscall.ENFILE, syscall.ENOBUFS, syscall.EADDRNOTAVAIL}
+	for _, err := range local {
+		if !localResourceError(err) {
+			t.Errorf("%v should be recognized as a local resource failure", err)
+		}
+		// The real error arrives wrapped in *net.OpError, several layers deep.
+		wrapped := &net.OpError{Op: "dial", Net: "tcp", Err: &os.SyscallError{Syscall: "socket", Err: err}}
+		if !localResourceError(wrapped) {
+			t.Errorf("%v wrapped in *net.OpError should still be recognized", err)
+		}
+	}
+	remote := []error{syscall.ECONNREFUSED, syscall.ETIMEDOUT, syscall.EHOSTUNREACH, syscall.ENETUNREACH,
+		context.Canceled, context.DeadlineExceeded}
+	for _, err := range remote {
+		if localResourceError(err) {
+			t.Errorf("%v is a fact about the target or the scan, not a local resource limit", err)
+		}
+	}
+}
+
+// TestMaxHostConcurrencyLeavesHeadroom: the clamp has to be derived from the
+// real limit, leave room for the descriptors that are not probe sockets, and
+// never return zero - a scan that probes nothing is not a safe fallback.
+func TestMaxHostConcurrencyLeavesHeadroom(t *testing.T) {
+	var rl syscall.Rlimit
+	if err := syscall.Getrlimit(syscall.RLIMIT_NOFILE, &rl); err != nil {
+		t.Skip("cannot read RLIMIT_NOFILE here")
+	}
+	checks := DefaultChecks()
+	got := MaxHostConcurrency(checks)
+	if got < 1 {
+		t.Fatalf("MaxHostConcurrency = %d, want at least 1", got)
+	}
+	ports := map[int]bool{}
+	for _, c := range checks {
+		ports[c.Port] = true
+	}
+	if used := got * len(ports) * fdsPerHost; uint64(used) > rl.Cur {
+		t.Errorf("clamp allows %d descriptors against a limit of %d", used, rl.Cur)
+	}
+	// Fewer ports to probe means more hosts fit; the formula must track that.
+	one := MaxHostConcurrency([]Check{{"ray-dashboard", 8265, "http", "/"}})
+	if one <= got {
+		t.Errorf("a one-port check set allows %d hosts, no more than the full set's %d", one, got)
 	}
 }
 
@@ -704,5 +764,101 @@ func TestValidateBucketURLErrorNamesTheInput(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "://typo") {
 		t.Errorf("error %q does not quote the offending entry", err)
+	}
+}
+
+// TestMaxHostConcurrencyHandlesAnUnlimitedBudget. RLIM_INFINITY is
+// math.MaxUint64; converted naively it goes negative and clamps the scan to
+// one host at a time, so the machines with no limits at all would have been
+// the slowest to scan.
+func TestMaxHostConcurrencyHandlesAnUnlimitedBudget(t *testing.T) {
+	var rl syscall.Rlimit
+	if err := syscall.Getrlimit(syscall.RLIMIT_NOFILE, &rl); err != nil {
+		t.Skip("cannot read RLIMIT_NOFILE here")
+	}
+	if rl.Cur < 1<<20 {
+		t.Skipf("local limit is %d; the saturating path is covered by the cap in MaxHostConcurrency", rl.Cur)
+	}
+	if got := MaxHostConcurrency(DefaultChecks()); got < 1000 {
+		t.Errorf("MaxHostConcurrency = %d on a host with a %d descriptor limit", got, rl.Cur)
+	}
+}
+
+// openFDs counts this process's open descriptors. Linux-only, which is why
+// the test that uses it skips elsewhere.
+func openFDs(t *testing.T) int {
+	t.Helper()
+	entries, err := os.ReadDir("/proc/self/fd")
+	if err != nil {
+		t.Skipf("cannot count open descriptors here: %v", err)
+	}
+	return len(entries)
+}
+
+// TestProbeHostUnderDescriptorExhaustion drives the real failure, with a real
+// EMFILE from a real dial, because that is the one link in this chain only the
+// kernel can prove. Everything downstream (no clean grade, the banner, exit 7)
+// is tested from ScanResult; this is the test that the dial error is
+// recognized at all.
+//
+// The target is a loopback port with nothing on it, which makes the assertion
+// sharp: with descriptors available that port is *closed*, which is an answer
+// and proves the host is alive. With none available the same probe must not
+// produce that answer - or any other - because we never got as far as asking.
+func TestProbeHostUnderDescriptorExhaustion(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("descriptor accounting is read from /proc/self/fd")
+	}
+	const deadPort = 1 // nothing listens on port 1; loopback refuses it
+	s := NewWithChecks(time.Second, []Check{{"ray-dashboard", deadPort, "http", "/"}})
+
+	var orig syscall.Rlimit
+	if err := syscall.Getrlimit(syscall.RLIMIT_NOFILE, &orig); err != nil {
+		t.Skipf("cannot read RLIMIT_NOFILE: %v", err)
+	}
+	// Below what is already open: existing descriptors keep working (Linux
+	// does not retroactively close them), and no new one - no socket - can be
+	// created. A couple spare, because counting /proc/self/fd uses one itself
+	// and the runtime may hold a descriptor that has just been released. The
+	// window is one call long, with nothing in it that needs a descriptor.
+	open := openFDs(t)
+	if open < 8 {
+		t.Skipf("only %d descriptors open; cannot construct an exhausted state safely", open)
+	}
+	tight := orig
+	tight.Cur = uint64(open - 4)
+	if err := syscall.Setrlimit(syscall.RLIMIT_NOFILE, &tight); err != nil {
+		t.Skipf("cannot lower RLIMIT_NOFILE: %v", err)
+	}
+	hs := s.ProbeHost(context.Background(), "127.0.0.1")
+	if err := syscall.Setrlimit(syscall.RLIMIT_NOFILE, &orig); err != nil {
+		t.Fatalf("could not restore RLIMIT_NOFILE: %v", err)
+	}
+
+	if hs.ProbeErrors == 0 {
+		t.Fatalf("no probe error recorded under descriptor exhaustion: %+v", hs)
+	}
+	if hs.State == domain.HostNoResponse {
+		t.Error("the host is reported as silent; it said nothing because we could not ask")
+	}
+	if hs.State == domain.HostResponded {
+		t.Error("the host is reported as responding, which it never got the chance to do")
+	}
+	if hs.State != domain.HostProbeFailed {
+		t.Errorf("state = %s, want %s", hs.State, domain.HostProbeFailed)
+	}
+	if len(hs.Observations) != 0 {
+		t.Errorf("recorded %d observation(s) from probes that never completed: %+v",
+			len(hs.Observations), hs.Observations)
+	}
+
+	// The control: the same probe, with descriptors available, is an answer.
+	healthy := s.ProbeHost(context.Background(), "127.0.0.1")
+	if healthy.ProbeErrors != 0 {
+		t.Errorf("probe errors reported with descriptors available: %+v", healthy)
+	}
+	if healthy.State != domain.HostResponded {
+		t.Errorf("state = %s with descriptors available, want %s (a refused port is an answer)",
+			healthy.State, domain.HostResponded)
 	}
 }

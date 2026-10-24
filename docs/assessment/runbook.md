@@ -73,6 +73,12 @@ For a tenant-side engagement, add `-buckets` if object storage is in scope.
 > patterns as a backstop, but the rule is simpler: client output lives in
 > `~/assessments/`, never in the working tree.
 
+> **If it prints a `notice:` about the open-file limit**, read it. The scan is
+> correct but slower — it clamped itself to what your machine can sustain. On a
+> laptop, `ulimit -n 4096` before the run avoids it. Do not raise
+> `-concurrency` past the notice: beyond that limit the scan does not fail, it
+> under-reports.
+
 **3. Check coverage before you read findings.** The report says how many
 targets responded. If some did not, that is in an orange "coverage gap" box
 naming them — the first ten, then a count of the rest, so a wide CIDR does not
