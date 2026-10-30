@@ -38,20 +38,33 @@ actions are now pinned to commit SHAs with Dependabot keeping them current, the
 release token is scoped to the release job, and the release verifies its own
 signatures before publishing. Separately, the `golangci-lint` job ran action v6
 against a v2 config, which v6 cannot drive: the lint gate was reporting green
-without enforcing the file it pointed at. **A CI run on these new pins has not
-happened yet** — nothing here is authenticated to GitHub, so the first run after
-push is the real confirmation. Watch it.
+without enforcing the file it pointed at. **Confirmed on GitHub 2026-10-30**:
+CI run `41105260819` passed in 3m7s on the new pins with the v2 config actually
+enforced (and `41106683714` after it).
 
-## ⚠️ Read this before tagging: `v0.1.0` is already pushed
+What the same look at the Actions tab also turned up: the nightly
+`Integration (real services)` job had been **failing for seven consecutive
+nights** on `no space left on device`, extracting an Ollama layer — a runner
+disk problem, not a detection problem (`make test-integration` passes locally
+in 27.8s). It is the worst-shaped CI failure this repo could have, because that
+job's name is the claim the README leans on hardest. Fixed by freeing the
+preinstalled toolchains before the pulls; see the decision log.
+
+## ⚠️ Read this before tagging: `v0.1.0` is already pushed (as a draft)
 
 `v0.1.0` exists on `origin` and points at `79d559f`, which predates both the
 working lint configuration and the fix that stops `report.Write` exiting 0 on a
 truncated report. Check what the tag push actually produced:
 
+Checked 2026-10-30: the `v0.1.0` release exists but **`isDraft: true`**, so it
+was never visible to anyone. It does carry the full signed artifact set (12
+binaries/`.sig`/`.pem`, `SHA256SUMS`, SBOM), because the release workflow ran
+and succeeded once on that tag — and then ran a second time on the same tag and
+**failed**, which is the moved tag the warning below is about.
+
 ```bash
-gh auth login                 # nothing in this workspace is authenticated
 gh release list
-gh run list --limit 10         # did the release workflow run, and did it pass?
+gh run list --workflow=release.yml --limit 5
 ```
 
 **Do not move the tag.** A Sigstore-logged release is supposed to be immutable;
@@ -60,7 +73,10 @@ security product. Cut a new patch from `main` instead — the message is
 pre-written in `docs/release-notes/v0.1.1.md`.
 
 If a `v0.1.0` release *was* published, note in its body that v0.1.1 supersedes
-it; do not delete it.
+it; do not delete it. It was **not** published — it is a draft — so nothing
+public ever claimed v0.1.0 and there is nothing to supersede. Deleting the
+draft is safe (it does not touch the tag) but is nobody's emergency; leave it
+unless it starts confusing people.
 
 ## Repo description and topics
 
