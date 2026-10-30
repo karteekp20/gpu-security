@@ -116,6 +116,26 @@ review faster is revenue, not cost.
 
 > "How many deals are stuck in someone's security review right now?"
 
+**As of late 2026 this objection is sharper than it used to be, and the
+revenue frame is no longer optional — it is the only one that works.** In
+October 2026 the listed neoclouds took a real market hit (CoreWeave, Nebius
+and IREN each down 30%+ in a month), and Gartner's widely-cited figure is that
+over 80% of neocloud providers may not operate independently by 2030. A
+provider watching that is not approving new security spend this quarter.
+
+What they *are* doing is fighting for enterprise tenants, because enterprise
+tenants are the ones who survive a price war — and every one of them runs a
+vendor-security review. So ask for the **sales-enablement or compliance**
+budget line and never the security one, and expect the buyer to behave like a
+sales leader rather than a CISO.
+
+Two cautions that follow from the same facts. Do not send a fear-led email to
+a company the week its stock dropped — lead with the deal-enablement angle or
+wait. And **log which budget line they name** (`../validation-log.md`): if the
+answers keep coming back "sales enablement", that is a product-direction
+finding about which surface matters most (the public trust page, §7.6 Surface
+B), not small talk.
+
 ## "Why should we trust a tool from someone we've never heard of?"
 
 You should not, on my word. So do not:
