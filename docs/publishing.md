@@ -136,13 +136,23 @@ human:
 
 ## Making it public
 
-GitHub → Settings → General → Danger Zone → Change visibility → Public.
+GitHub → Settings → General → Danger Zone → Change visibility → Public, or:
+
+```bash
+gh repo edit karteekp20/gpu-security --visibility public \
+  --accept-visibility-change-consequences
+```
 
 Then enable, in Settings → Code security:
 
+- [x] Dependabot alerts and security updates — enabled 2026-10-30
+      (`PUT /vulnerability-alerts` → 204; `automated-security-fixes` →
+      `enabled: true`). These are the two that work on a private repo.
 - [ ] Private vulnerability reporting (SECURITY.md points people at it).
-- [ ] Dependabot alerts and security updates.
-- [ ] Secret scanning.
+      `PUT /private-vulnerability-reporting` returns **404 while the repo is
+      private** — this one has to wait for the flip, it is not a scope problem.
+- [ ] Secret scanning. `PATCH /repos` returns **422 "Secret scanning is not
+      available for this repository"** for the same reason.
 
 ## Cutting the first release
 
@@ -173,12 +183,31 @@ cosign verify-blob \
 sha256sum -c SHA256SUMS
 ```
 
-- [ ] `cosign verify-blob` succeeds against a freshly downloaded artifact.
-      The workflow now runs this itself before publishing, so a green run is
-      already evidence — but verify a *downloaded* artifact anyway, because
-      that is the path a buyer takes.
-- [ ] The checksums match.
-- [ ] The binary runs: `./ray-guard-linux-amd64 -version`.
+**Done 2026-10-30 — `v0.1.1` is published** (run `41109256221`, `isDraft:
+false`, 12 assets: 4 binaries, 6 `.sigstore.json` bundles, `SHA256SUMS`,
+`sbom.cyclonedx.json`).
+
+- [x] `cosign verify-blob` succeeds against a freshly downloaded artifact.
+      All six bundles verified `Verified OK` against a `gh release download`
+      into a clean directory — the path a buyer takes, not the workflow's own
+      self-check.
+- [x] The checksums match (`sha256sum -c SHA256SUMS`: 4/4 OK).
+- [x] The binary runs: the downloaded `ray-guard-linux-amd64` prints
+      `ray-guard v0.1.1`.
+
+**It took two attempts, and the first failure is the useful part.** The
+initial `v0.1.1` build failed in the signing step: cosign 3 ignores
+`--output-signature`/`--output-certificate` and wants `--bundle`. The installer
+action was SHA-pinned; the cosign *binary* it installs was not. Artifacts are
+now Sigstore bundles, the binary is pinned to `v3.1.4`, and the tag was
+re-pushed — safe only because the failed run created no release and the repo
+was still private. **The rule stays unconditional for anything that shipped:**
+a tag whose release published is immutable, full stop. Verify a release
+exists before concluding otherwise:
+
+```bash
+gh api repos/karteekp20/gpu-security/releases --jq '.[] | "\(.tag_name) draft=\(.draft)"'
+```
 
 ## After publishing
 
