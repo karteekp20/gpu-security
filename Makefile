@@ -54,6 +54,7 @@ test-policies:
 		|| { echo "opa not installed: https://www.openpolicyagent.org/docs/latest/#running-opa"; exit 1; }
 	opa check --strict policies/
 	opa test policies/ --verbose
+	python3 policies/tools/differential.py
 
 ## test-integration: run the detections against REAL services in docker.
 ## Unit tests only prove our logic agrees with our own mocks; this proves

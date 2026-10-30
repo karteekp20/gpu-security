@@ -29,7 +29,10 @@ finding_condition if {
 # which belongs in the finding's status, not in a sentinel: a sentinel that
 # accepted an explanation would put a human assertion inside a signed
 # credential, which is the one thing §8 exists to prevent.
-verification_condition if lib.isolated(input)
+verification_condition if {
+	input.service == "unknown"
+	lib.isolated(input)
+}
 
 finding_metadata := {
 	"id": "RG-EXPOSURE-001",

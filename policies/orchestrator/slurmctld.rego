@@ -14,10 +14,14 @@ finding_condition if {
 	lib.reachable_tcp(input)
 }
 
-# Verification sentinel: isolation only. There is no auth state to observe on
-# a port that speaks no HTTP, so this rule deliberately offers one closure
-# rather than inventing a second. Requires a host that answered.
-verification_condition if lib.isolated(input)
+# Verification sentinel: isolation only, bound to this service. There is no
+# auth state to observe on a port that speaks no HTTP, so this rule
+# deliberately offers one closure rather than inventing a second. Requires a
+# host that answered.
+verification_condition if {
+	input.service == "slurmctld"
+	lib.isolated(input)
+}
 
 finding_metadata := {
 	"id": "RG-SLURM-001",

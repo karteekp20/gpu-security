@@ -21,6 +21,7 @@ finding_condition if {
 # 4xx only - a 5xx is an outage, not a permission change, and closing a
 # finding on an outage would be a false attestation.
 verification_condition if {
+	input.service == "bucket"
 	lib.host_reached(input)
 	input.unauth == false
 	input.http_status >= 400

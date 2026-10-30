@@ -24,11 +24,15 @@ finding_condition if {
 # for credentials has not fixed this finding, it has replaced it with a worse
 # one. Isolation also closes it.
 verification_condition if {
+	lib.known_service(input)
 	lib.tls_terminated(input)
 	lib.auth_enforced(input)
 }
 
-verification_condition if lib.isolated(input)
+verification_condition if {
+	lib.known_service(input)
+	lib.isolated(input)
+}
 
 finding_metadata := {
 	"id": "RG-TLS-002",
