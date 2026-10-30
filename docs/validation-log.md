@@ -35,6 +35,31 @@ platform — that is the gate working, not the gate failing.
 Record one row per run where a buyer's security or ops lead was present.
 Be honest in these rows; a log that flatters the product is worse than none.
 
+> **This file is public.** The repository went public on 2026-10-30, so this
+> table is a disclosure, not a notebook. Two rules follow:
+>
+> 1. **Never name a client here without their written permission.** A row
+>    saying who you scanned, what you found and whether they would pay is
+>    their commercial and security information, not ours to publish. Without
+>    permission the row reads `Neocloud A (51–200, EU)` — enough to judge the
+>    gate, not enough to identify anyone.
+> 2. **The source of truth is private.** Names, contacts, notes and the
+>    funnel live in a CSV outside this tree (alongside client reports, per
+>    [`assessment/runbook.md`](assessment/runbook.md)). The two tables below
+>    are generated from it:
+>
+> ```bash
+> python3 docs/assessment/tools/pipeline.py              # the funnel + the gate
+> python3 docs/assessment/tools/pipeline.py --markdown   # paste-ready, anonymized
+> ```
+>
+> The counting is done by code on purpose. A run counts as buyer-led only when
+> the scan completed **and** the buyer's own security/ops lead was in the room,
+> and an intent counts only when "would pay" and "would ask for it by name"
+> are both an unambiguous yes on the same row. "Seemed keen" is not a yes.
+> Do not hand-edit the tables — re-run the script, so the numbers always come
+> from the evidence rather than from memory.
+
 | # | Date | Organization | Vantage (§1.5) | Who was in the room (role) | Findings surfaced | Would pay? | Would ask for it by name? | Notes |
 | :-- | :-- | :-- | :-- | :-- | :-- | :-- | :-- | :-- |
 | — | — | — | — | — | — | — | — | *no runs yet* |

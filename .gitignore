@@ -11,6 +11,13 @@
 /report-*/
 snapshot*.json
 
+# The outreach tracker: prospect names, contacts and conversation notes. It is
+# meant to live in ~/assessments/, never here - this is the backstop for a copy
+# made into the tree by accident. The template it is copied FROM is committed
+# (docs/assessment/tools/pipeline.csv.template) and holds no real data.
+pipeline.csv
+pipeline-*.csv
+
 # `go build ./cmd/...` drops the binary here rather than in bin/
 /ray-guard
 
