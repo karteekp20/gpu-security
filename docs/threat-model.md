@@ -253,8 +253,15 @@ snapshot — not to the report they read themselves.
 
 **Controls.**
 - Releases are built in CI from a tagged commit, never from a workstation.
-- Every artifact is signed with cosign keyless signing (Sigstore transparency
-  log); verification instructions ship in the release body and SECURITY.md.
+- Every artifact is signed with cosign keyless signing and ships with a
+  Sigstore bundle (`<artifact>.sigstore.json`: signature, certificate and
+  transparency-log proof in one file); verification instructions ship in the
+  release body and SECURITY.md, and the release workflow runs them against
+  what it just signed before it publishes anything. The cosign *binary* is
+  version-pinned, not only the installer action — an unpinned cosign 3 broke
+  the signing step once, and a signing step that breaks loudly is the good
+  case; one that silently emits something the current verifier cannot read
+  would be found by whoever took our instructions seriously.
 - A CycloneDX SBOM and SHA-256 checksums accompany every release.
 - `govulncheck` and `golangci-lint` (including `gosec`) gate every PR.
 - Static, `CGO_ENABLED=0` builds — no dynamic linking surface.

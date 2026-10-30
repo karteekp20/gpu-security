@@ -29,7 +29,7 @@ moves; otherwise this is the record.
 | **TLS floor** | unit: server capped at TLS 1.0/1.1; integration: real nginx | service still identified behind 1.0/1.1 with `RG-TLS-003`; nginx negotiates 1.2/1.3 with no version finding |
 | **Low descriptor limit** | `bash -c 'ulimit -Sn 128; ulimit -Hn 128; ray-guard -cidr <demo>/24'` | F with 19 findings, 0 probe errors, 4m1s (clamped to 2 hosts at a time). Before the clamp the same run graded **C with 3 findings** — re-run this if `MaxHostConcurrency` or the check set changes |
 | **Ctrl-C mid-scan** | `kill -INT` against a running `-cidr` sweep | exit **130**, report written, `interrupted: true`, "0 of 254 targets were probed", nothing recorded as unreachable. Checked by hand because the signal path itself cannot be tested without a timing-dependent test; re-run it if `cmd/ray-guard` changes |
-| Release instructions are runnable | `.github/workflows/release.yml` vs `SECURITY.md` | `.sig`/`.pem` names, upload globs, `cd bin && sha256sum -c` paths and `VERSION=` override all line up |
+| Release instructions are runnable | `.github/workflows/release.yml` vs `SECURITY.md` | Re-checked 2026-10-30 after the cosign-3 migration: `.sigstore.json` bundle names, upload globs, `cd bin && sha256sum -c` paths and `VERSION=` override all line up |
 
 **What that outsider read changed.** T6 claimed "pinned actions". The workflows
 used mutable major tags (`@v4`, `@v0`) on the actions that build and sign the
@@ -165,8 +165,7 @@ gh run watch                       # or the Actions tab
 
 # Download an artifact and its signature, then:
 cosign verify-blob \
-  --certificate ray-guard-linux-amd64.pem \
-  --signature  ray-guard-linux-amd64.sig \
+  --bundle ray-guard-linux-amd64.sigstore.json \
   --certificate-identity-regexp '^https://github.com/karteekp20/gpu-security/' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   ray-guard-linux-amd64

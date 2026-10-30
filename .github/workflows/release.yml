@@ -46,20 +46,32 @@ jobs:
           format: cyclonedx-json
           output-file: bin/sbom.cyclonedx.json
 
+      # The ACTION is pinned by SHA; that pins the installer, not the tool it
+      # installs. Unpinned, cosign 3 arrived on its own and broke the signing
+      # step: --output-signature / --output-certificate are deprecated AND
+      # ignored there, so with no --bundle it tried to write a bundle to "".
+      # Pin the binary too, and let Dependabot move both deliberately.
       - name: Install cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: "v3.1.4"
 
       # Keyless signing against the Sigstore transparency log. This is
       # deliberately the SAME mechanism the air-gap update manifest will use
       # in Phase 1 (CLAUDE.md 13) - one signing path, never two.
+      #
+      # One Sigstore bundle per artifact rather than a detached .sig + .pem
+      # pair, because cosign 3's verify-blob accepts ONLY --bundle: the
+      # detached flags are gone from the verifier entirely. Signing the old
+      # way would hand a buyer artifacts that the cosign they just installed
+      # cannot check with any command we could print - which is worse than
+      # not signing, because the instruction would look authoritative and
+      # fail.
       - name: Sign artifacts
         run: |
           cd bin
           for f in ray-guard-* SHA256SUMS sbom.cyclonedx.json; do
-            cosign sign-blob --yes \
-              --output-signature "$f.sig" \
-              --output-certificate "$f.pem" \
-              "$f"
+            cosign sign-blob --yes --bundle "$f.sigstore.json" "$f"
           done
 
       # Verify what we just signed, before anyone is told it is verifiable.
@@ -70,10 +82,9 @@ jobs:
         run: |
           cd bin
           for f in ray-guard-* SHA256SUMS sbom.cyclonedx.json; do
-            case "$f" in *.sig|*.pem) continue ;; esac
+            case "$f" in *.sigstore.json) continue ;; esac
             cosign verify-blob \
-              --certificate "$f.pem" \
-              --signature "$f.sig" \
+              --bundle "$f.sigstore.json" \
               --certificate-identity-regexp '^https://github.com/${{ github.repository }}/' \
               --certificate-oidc-issuer https://token.actions.githubusercontent.com \
               "$f"
@@ -92,16 +103,21 @@ jobs:
             ## Verifying this release
 
             Every artifact is signed with [cosign](https://docs.sigstore.dev/)
-            keyless signing. Verify before you run it on a cluster:
+            keyless signing, as a Sigstore bundle alongside it. Verify before
+            you run it on a cluster (needs cosign 2.4+; download the binary
+            and its `.sigstore.json`):
 
             ```bash
             cosign verify-blob \
-              --certificate ray-guard-linux-amd64.pem \
-              --signature  ray-guard-linux-amd64.sig \
+              --bundle ray-guard-linux-amd64.sigstore.json \
               --certificate-identity-regexp '^https://github.com/${{ github.repository }}/' \
               --certificate-oidc-issuer https://token.actions.githubusercontent.com \
               ray-guard-linux-amd64
             ```
+
+            The identity in the bundle is this repository's release workflow,
+            so a successful verification says the binary came out of a public
+            build of this tag - not merely that someone signed it.
 
             Checksums are in `SHA256SUMS`; a CycloneDX SBOM ships as
             `sbom.cyclonedx.json`.

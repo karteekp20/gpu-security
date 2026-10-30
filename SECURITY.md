@@ -30,17 +30,24 @@ is resolved. We will credit you in the advisory unless you prefer otherwise.
 ## Verifying a release
 
 Every release artifact is signed with cosign keyless signing and ships with a
-CycloneDX SBOM and SHA-256 checksums. Verify before running a binary against a
-cluster:
+CycloneDX SBOM and SHA-256 checksums. Each artifact has a Sigstore bundle
+(`<artifact>.sigstore.json`) next to it holding the signature, the certificate
+and the transparency-log proof. Download both, then verify before running a
+binary against a cluster (cosign 2.4 or newer):
 
 ```bash
 cosign verify-blob \
-  --certificate ray-guard-linux-amd64.pem \
-  --signature  ray-guard-linux-amd64.sig \
+  --bundle ray-guard-linux-amd64.sigstore.json \
   --certificate-identity-regexp '^https://github.com/karteekp20/gpu-security/' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   ray-guard-linux-amd64
+
+sha256sum -c SHA256SUMS
 ```
+
+The identity checked here is this repository's release workflow, so a pass
+means the binary came out of a public build of that tag — not just that
+somebody signed something.
 
 ## Using this tool
 
