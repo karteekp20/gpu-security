@@ -10,16 +10,27 @@ maintained by being tested, not by being remembered.
 ## Before the call
 
 ```bash
-make demo-up      # 1-2 min: Ray takes 30-60s to bind its dashboard
+make demo-up      # 8s warm. FIRST EVER RUN: pulls ~11.5GB of images.
 ```
 
-**Run this before you join, not while they watch.** A minute of silence on a
-screenshare while containers pull is the worst possible opening.
+**On a machine that has run it before, this takes about 8 seconds** (measured
+2026-10-31). On a machine that has not, it pulls roughly 11.5GB — Ollama alone
+is 5.5GB because it bundles CUDA libraries — and that is minutes to tens of
+minutes on hotel or conference wifi. So on any laptop you have not demoed from
+before:
+
+```bash
+cd test/integration && docker compose pull     # do this the DAY BEFORE
+```
+
+**Either way, bring the stack up before you join, not while they watch.**
+Silence on a screenshare while containers pull is the worst possible opening,
+and Ray still needs 30–60s after the pull to bind its dashboard.
 
 Check it worked:
 
 ```bash
-make demo         # ~15s, writes ./report
+make demo         # 16s, writes ./report
 ```
 
 You should get grade **F**, 13 affected hosts, 21 findings, and `RG-RAY-001`
@@ -28,6 +39,20 @@ at the top of "Fix these first" with `RG-TORCHSERVE-001` second and a second
 don't, fix that before the call rather than improvising in it.
 
 Have `./report/report.html` open in a browser tab, ready.
+
+**Know what is on the subnet**, because "what is 172.31.77.42?" is a question
+you get asked mid-demo and guessing is worse than not knowing:
+
+| Host | What it is |
+| :-- | :-- |
+| `.10` | Real Ray — the flagship critical, plus the client port on 10001 |
+| `.11` `.12` `.13` | Real Jupyter, MLflow, Ollama |
+| `.20` `.21` `.23` `.24` | vLLM, Triton, SGLang, DCGM exporter — the four stand-ins |
+| `.22` | Real TorchServe, token auth **off** — the second critical |
+| `.30` | Slurm controller (TCP listener; reachability only) |
+| `.40` | **Control:** a service with auth on every path |
+| `.42` | **Control:** real TorchServe with its default token auth **on** |
+| `.50` | Real Ray behind an nginx TLS proxy — the third critical |
 
 ## The run (about 60 seconds)
 
@@ -98,6 +123,29 @@ pattern:
 > hands over per-GPU utilization labelled with the pod and namespace using it
 > — so it's an inventory of whose workload is on which GPU. No CVE, nothing
 > exploitable. It's just a tenant list for anyone who asks."
+
+**3c. The two hosts it did *not* flag.** Spend thirty seconds here. It is the
+most persuasive thing in the demo and it is easy to skip, because by now you
+are enjoying the findings.
+
+The security lead across the table is wondering whether this tool screams at
+everything. Two hosts on that subnet answer that:
+
+> "172.31.77.42 is the same TorchServe as the critical on .22 — same image,
+> same version, same management API reachable on 8081. The difference is that
+> its default token authorization is left on. No critical. The tool reports it
+> as an unidentified service at Info, because a 400 from a token-protected API
+> is not something it is willing to name. And .40 is a service with auth on
+> every path: the exposure rules stay quiet, and the only finding is that the
+> auth happens over plaintext — which is a real finding, because the
+> credentials cross the wire in the clear.
+>
+> That is what the number on the report is worth. If it flagged those two, you
+> would be right to ignore all of it."
+
+Those two containers exist in the integration suite as negative controls, and
+the tests assert they raise *nothing more* than that. Say that too — it is the
+difference between a demo and a sales pitch.
 
 **4. The footer.** Short, and it pre-empts the question they are already
 forming:
