@@ -8,7 +8,7 @@ PLATFORMS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64
 # security lead who will run it once, in 60 seconds (CLAUDE.md P4, 15).
 GOFLAGS_STATIC := CGO_ENABLED=0
 
-.PHONY: build build-all test test-p3 test-integration tls-fixture fuzz demo demo-up demo-down lint fmt run report-pdf sbom airgap-bundle clean
+.PHONY: build build-all test test-p3 test-policies test-integration tls-fixture fuzz demo demo-up demo-down lint fmt run report-pdf sbom airgap-bundle clean
 
 # The demo subnet is pinned in test/integration/docker-compose.yml.
 DEMO_SUBNET := 172.31.77.0/24
@@ -44,6 +44,16 @@ fuzz:
 		echo "  $$t"; \
 		go test ./internal/scan -run $$t -fuzz $$t -fuzztime $(FUZZTIME) || exit 1; \
 	done
+
+## test-policies: the Rego rule library (CLAUDE.md 8). Needs opa on PATH.
+## The structural checks - both sentinel halves, metadata, a test per rule, no
+## drift from detect.go - are in `make test`, so they run without opa; this is
+## the semantic half.
+test-policies:
+	@command -v opa >/dev/null 2>&1 \
+		|| { echo "opa not installed: https://www.openpolicyagent.org/docs/latest/#running-opa"; exit 1; }
+	opa check --strict policies/
+	opa test policies/ --verbose
 
 ## test-integration: run the detections against REAL services in docker.
 ## Unit tests only prove our logic agrees with our own mocks; this proves

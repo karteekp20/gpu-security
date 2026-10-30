@@ -80,6 +80,38 @@ jobs:
         with:
           version: v2.14
 
+  # The Rego rule library (CLAUDE.md §8). Two gates, and they check different
+  # things:
+  #
+  #   * `opa test` proves the rules mean what their tests say - including that
+  #     a host nobody reached cannot close a finding, which is the property the
+  #     signed credential rests on.
+  #   * `opa check --strict` catches unused imports and shadowed names, which
+  #     in Rego are usually a rule that silently never matches.
+  #
+  # The structural half - both sentinel halves present, metadata parseable, a
+  # test per rule, and no drift from detect.go - runs in the Go suite
+  # (internal/scan/rule_parity_test.go), so it gates every change even when
+  # this job is not the one that fails.
+  #
+  # OPA is version-pinned, not `latest`: Rego v1 changed rule syntax, and an
+  # engine that moves on its own would either break the library or quietly
+  # change what it means. The action is SHA-pinned like every other.
+  policy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: open-policy-agent/setup-opa@b2b258e089860efaadaaf71bf6e3aecb4a3eeff1 # v2.4.0
+        with:
+          version: 1.22.0
+
+      - name: Lint the policy library
+        run: opa check --strict policies/
+
+      - name: Rule tests (both sentinel halves)
+        run: opa test policies/ --verbose
+
   # We are a security product and therefore a high-value target (CLAUDE.md P8).
   # Scan our own dependencies and code on every change.
   supply-chain:

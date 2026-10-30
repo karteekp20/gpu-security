@@ -102,15 +102,23 @@ type HostSummary struct {
 // It never contains payload (metadata-only-guard skill / CLAUDE.md P3).
 // Every field here is existence, exposure, configuration, or version state.
 // No field may carry a response body, object key, or any customer content.
+// Observation is one benign fact about one port. The JSON tags are the input
+// contract for the Rego rule library (/policies): the Phase-1 collector ships
+// observations in this shape, joined with their host's state, and every
+// verification sentinel reads these field names. Renaming one silently stops
+// rules matching, so the names are part of the API, not a detail.
+//
+// Note carries a short scanner-authored string ("control/RPC port; speaks no
+// HTTP"), never anything taken from a response body (P3).
 type Observation struct {
-	Host       string
-	Port       int
-	Service    string
-	State      PortState
-	HTTPStatus int
-	TLS        TLSState
-	Unauth     bool
-	Note       string
+	Host       string    `json:"host"`
+	Port       int       `json:"port"`
+	Service    string    `json:"service"`
+	State      PortState `json:"state"`
+	HTTPStatus int       `json:"http_status"`
+	TLS        TLSState  `json:"tls"`
+	Unauth     bool      `json:"unauth"`
+	Note       string    `json:"note,omitempty"`
 }
 
 type Finding struct {
