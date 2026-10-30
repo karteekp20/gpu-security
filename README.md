@@ -64,7 +64,7 @@ make report-pdf IN=x.html OUT=x.pdf
 | Flag | Purpose |
 |---|---|
 | `-targets` | Comma-separated hosts/IPs |
-| `-targets-file` | One host per line; `#` comments ignored |
+| `-targets-file` | One host per line; `#` comments on their own line |
 | `-cidr` | Comma-separated CIDR blocks; skips network/broadcast addresses |
 | `-allow-large-cidr` | Permit blocks wider than /16 (IPv4) or /112 (IPv6) |
 | `-ports` | Override probe ports: `vllm=8100,9000` (service=port, and/or bare ports) |
@@ -75,6 +75,13 @@ make report-pdf IN=x.html OUT=x.pdf
 | `-timeout` | Per-probe timeout (default 4s) |
 | `-concurrency` | Max concurrent host probes (default 32) |
 | `-version` | Print version and exit |
+
+A target is a host, not a URL. `https://10.0.0.5:8265`, `10.0.0.5:8265` and `10.0.0.0/24` are
+each rejected before the scan starts, with the host or flag you probably meant — because
+ray-guard chooses the ports itself (`-ports` moves a service), and `-cidr` expands blocks. An
+entry we cannot dial would otherwise be recorded as an *unresolved host*, which is
+indistinguishable from the target's DNS being broken: with one reachable host alongside it, a
+scan that never looked at something in scope graded `A+` and exited 0.
 
 ### Exit codes
 
@@ -189,7 +196,7 @@ make lint             # gofmt + go vet + golangci-lint
 make test             # go test -race ./...
 make test-p3          # metadata-only enforcement suite (P3) — never skip
 make test-integration # detections against REAL Ray/Jupyter/MLflow/Ollama in Docker
-make fuzz             # fuzz the -cidr and -ports parsers (nightly in CI)
+make fuzz             # fuzz the -cidr, -ports and -targets parsers (nightly in CI)
 make build-all        # cross-compile the release matrix + checksums
 ```
 

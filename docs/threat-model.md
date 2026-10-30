@@ -114,12 +114,22 @@ triggers an incident on a cluster running a multi-week training job.*
   `exec`, `submit`, `job`, or `run` fail the build.
 - CIDR expansion refuses blocks wider than /16 without an explicit flag, and a
   hard ceiling the flag cannot lift.
-- The two parsers that turn operator input into a target list (`-cidr`,
-  `-ports`) are fuzzed nightly. The properties they hold are the ones that
-  keep a scan inside its authorization: every expanded target parses as an
-  address, the host ceiling is never exceeded, and no `-ports` string can
-  introduce a probe path the allowlist never reviewed. A parser bug here does
-  not crash the tool so much as point it somewhere nobody agreed to.
+- Every target is validated before anything is dialed: an entry that is not a
+  host (a URL, `host:port`, a CIDR block in `-targets`, a malformed address)
+  exits 2 rather than being probed or quietly skipped, and an IPv6 zone is
+  constrained to an interface name so that the host we dial is the host we
+  were given.
+- The three parsers that turn operator input into a target list (`-cidr`,
+  `-ports`, `-targets`) are fuzzed nightly. The properties they hold are the
+  ones that keep a scan inside its authorization: every expanded target parses
+  as an address, the host ceiling is never exceeded, no `-ports` string can
+  introduce a probe path the allowlist never reviewed, and every accepted
+  target survives into a probe URL as itself — naming no other host, port or
+  path. A parser bug here does not crash the tool so much as point it
+  somewhere nobody agreed to. The `-targets` property found one on the day it
+  was written: an IPv6 zone may contain any bytes, including the ones that
+  terminate a host inside a URL, so the zone is now constrained to an
+  interface name.
 - A fixed, identifying User-Agent (`ray-guard/<version> (+benign posture
   probe)`) so a defender who sees the traffic can attribute it immediately.
 - Ctrl-C takes effect at once: no further target is dialed, in-flight probes

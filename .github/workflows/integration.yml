@@ -35,8 +35,9 @@ jobs:
           cd test/integration
           docker compose logs --tail=100 || true
 
-  # The -cidr and -ports parsers read strings an operator pastes on a command
-  # line, and -cidr does arithmetic on prefix lengths including a left shift.
+  # The -cidr, -ports and -targets parsers read strings an operator pastes on
+  # a command line; -cidr does arithmetic on prefix lengths including a left
+  # shift, and -targets decides what gets dialed at all.
   # A panic in front of a buyer is a credibility event, so the search runs
   # nightly rather than only over the seed corpus that `make test` covers.
   fuzz:

@@ -68,6 +68,15 @@ is omitted from the anonymized file by construction.
 
 For a tenant-side engagement, add `-buckets` if object storage is in scope.
 
+> **If it exits 2 with a complaint about a target, that is the tool refusing
+> to pretend.** A target is a host, not a URL: `-targets
+> https://10.0.0.5:8265` or `10.0.0.5:8265` is rejected before anything is
+> dialed, and the message names the host you meant. Fix it and re-run — it
+> happens before the network is touched, so nothing has been spent. This
+> exists because an entry we cannot dial used to be filed as an *unresolved
+> host*, which looks exactly like the client's DNS misbehaving while the
+> thing you were asked to look at went unscanned.
+
 > **Write the report outside this repository.** A client's findings are their
 > confidential data and this repo is destined to be public. `.gitignore` has
 > patterns as a backstop, but the rule is simpler: client output lives in

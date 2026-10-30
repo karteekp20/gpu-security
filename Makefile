@@ -35,12 +35,15 @@ test:
 test-p3:
 	go test -race -v ./test/...
 
-## fuzz: fuzz the two parsers that read operator input (-cidr and -ports).
+## fuzz: fuzz the parsers that read operator input (-cidr, -ports, -targets).
 ## The seed corpora run as ordinary tests in `make test`; this is the search.
 ## Runs nightly in CI. Override the budget with FUZZTIME=5m.
+FUZZ_TARGETS := FuzzExpandCIDR FuzzApplyPortOverrides FuzzNormalizeTarget
 fuzz:
-	go test ./internal/scan -run FuzzExpandCIDR -fuzz FuzzExpandCIDR -fuzztime $(FUZZTIME)
-	go test ./internal/scan -run FuzzApplyPortOverrides -fuzz FuzzApplyPortOverrides -fuzztime $(FUZZTIME)
+	@for t in $(FUZZ_TARGETS); do \
+		echo "  $$t"; \
+		go test ./internal/scan -run $$t -fuzz $$t -fuzztime $(FUZZTIME) || exit 1; \
+	done
 
 ## test-integration: run the detections against REAL services in docker.
 ## Unit tests only prove our logic agrees with our own mocks; this proves

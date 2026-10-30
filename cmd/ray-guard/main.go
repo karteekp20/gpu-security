@@ -309,9 +309,21 @@ func ensureWritable(dir string) error {
 	return os.Remove(name)
 }
 
+// loadTargets assembles the target list and rejects any entry that is not
+// probeable, naming where it came from. The check happens here, before the
+// scanner exists, because an unprobeable entry is recorded as "unresolved" -
+// and one bad entry among good ones grades the report on the rest without
+// saying anything a reader can distinguish from the customer's own DNS
+// failing. See scan.NormalizeTarget.
 func loadTargets(arg, file, cidr string, allowLarge bool) ([]string, error) {
 	var out []string
-	out = append(out, splitList(arg)...)
+	for _, raw := range splitList(arg) {
+		t, err := scan.NormalizeTarget(raw)
+		if err != nil {
+			return nil, fmt.Errorf("-targets: %w", err)
+		}
+		out = append(out, t)
+	}
 
 	if file != "" {
 		// #nosec G304 -- this is the -targets-file the operator passed; reading
@@ -320,10 +332,18 @@ func loadTargets(arg, file, cidr string, allowLarge bool) ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
-		for _, line := range strings.Split(string(b), "\n") {
-			if s := strings.TrimSpace(line); s != "" && !strings.HasPrefix(s, "#") {
-				out = append(out, s)
+		for i, line := range strings.Split(string(b), "\n") {
+			s := strings.TrimSpace(line)
+			if s == "" || strings.HasPrefix(s, "#") {
+				continue
 			}
+			t, err := scan.NormalizeTarget(s)
+			if err != nil {
+				// The line number is the point: a 300-line host list with one
+				// bad entry is otherwise a hunt.
+				return nil, fmt.Errorf("%s line %d: %w", file, i+1, err)
+			}
+			out = append(out, t)
 		}
 	}
 

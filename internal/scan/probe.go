@@ -651,7 +651,9 @@ func (s *Scanner) tlsProbe(ctx context.Context, host string, port int) (domain.T
 		inter.AddCert(c)
 	}
 	if _, verr := leaf.Verify(x509.VerifyOptions{
-		DNSName: host, Roots: roots, Intermediates: inter,
+		// x509 has no concept of a zone, and a scoped address would never
+		// match a SAN. Verify the address itself.
+		DNSName: stripZone(host), Roots: roots, Intermediates: inter,
 	}); verr != nil {
 		state.Issue = classifyTLSError(verr, leaf)
 	}
@@ -681,6 +683,34 @@ func classifyTLSError(err error, leaf *x509.Certificate) string {
 	return "untrusted"
 }
 
+// urlHost renders host:port for use in a URL.
+//
+// It exists for one case: a zone-scoped IPv6 address, which is how a
+// link-local address on a management network is written ("fe80::1%eth0").
+// net.Dial takes that form directly, but a URL must percent-escape the zone
+// (RFC 6874, "fe80::1%25eth0"). Unescaped, http.NewRequest fails to parse
+// every URL we build for such a host - so the TCP dial succeeds, all of the
+// HTTP probes fail to be built, and the port is reported as "open, no HTTP
+// response". Measured against a real listener: an unauthenticated dashboard
+// on a scoped address became an Info-level unidentified port, which is the
+// flagship Critical silently downgraded. Verified that the escaped form does
+// reach a real server (status 200 on ::1%lo), rather than assumed from the RFC.
+func urlHost(host string, port int) string {
+	if i := strings.IndexByte(host, '%'); i >= 0 {
+		host = host[:i] + "%25" + host[i+1:]
+	}
+	return net.JoinHostPort(host, strconv.Itoa(port))
+}
+
+// stripZone removes an IPv6 zone from an address. The zone is a local
+// interface name: it is how we reach the host, not part of its identity.
+func stripZone(host string) string {
+	if i := strings.IndexByte(host, '%'); i >= 0 {
+		return host[:i]
+	}
+	return host
+}
+
 // httpProbe sends ONE benign GET to a known health/info path and records
 // whether the service answered without requiring auth. It sends no body, uses
 // no method other than GET, and discards the response body without inspecting
@@ -696,7 +726,7 @@ func (s *Scanner) httpProbe(ctx context.Context, host string, c Check, tlsState 
 		schemes = []string{"https"}
 	}
 	for _, scheme := range schemes {
-		target := fmt.Sprintf("%s://%s%s", scheme, net.JoinHostPort(host, strconv.Itoa(c.Port)), c.Path)
+		target := fmt.Sprintf("%s://%s%s", scheme, urlHost(host, c.Port), c.Path)
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 		if err != nil {
 			continue

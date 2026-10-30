@@ -6,7 +6,7 @@ it is written down as a checklist rather than left to recollection.
 
 Repo: `git@github.com:karteekp20/gpu-security.git`
 
-## Preflight — verified 2026-10-10 (last two rows: 2026-10-24)
+## Preflight — verified 2026-10-10 (TLS/descriptor/Ctrl-C rows 2026-10-24; targets rows 2026-10-30)
 
 Everything mechanical below has been run and passes. Re-run it if the tree
 moves; otherwise this is the record.
@@ -16,9 +16,10 @@ moves; otherwise this is the record.
 | Lint | `make lint` | 0 issues (golangci-lint 2.14, config now actually enforced) |
 | Unit tests | `go test -race ./...` | pass |
 | P3 metadata-only | `make test-p3` | pass |
-| **Real services** | `make test-integration` | **pass, 21.3s** — real Ray grades F; Jupyter, MLflow, Ollama detected; vLLM/Triton/Slurm correctly announce themselves as fixtures |
+| **Real services** | `make test-integration` | **pass, 27.8s** (2026-10-30) — real Ray grades F; Jupyter, MLflow, Ollama, TorchServe and nginx-terminated TLS detected; vLLM/Triton/SGLang/DCGM/Slurm correctly announce themselves as fixtures |
 | Cross-compile matrix | `make build-all` | 4/4 platforms, `SHA256SUMS` written |
-| Fuzzing | `make fuzz FUZZTIME=45s` | ~1.25M execs per parser, no crashes; nightly in CI at 150s |
+| Fuzzing | `make fuzz FUZZTIME=120s` | 2026-10-30: 2.65M / 2.70M / 2.53M execs (`-cidr` / `-ports` / `-targets`), no crashers; nightly in CI at 150s. The `-targets` property found two defects on the day it was written (see the decision log) |
+| **Target syntax** | `ray-guard -targets http://172.31.77.10:8265,172.31.77.22` against the live demo stack | exits **2** before any probing, naming the host meant; the corrected list grades **F** with both criticals. Previously the URL was filed as an unresolved host and graded around |
 | No placeholders | `git grep -nE '<YOUR NAME>\|TODO\|FIXME\|/tmp/claude-'` | clean |
 | LICENSE holder | — | MIT, "Copyright (c) 2026 Karteek" |
 | `.gitignore` | — | covers `bin/`, `report/`, `report-*/`, `snapshot*.json`, `/ray-guard` |

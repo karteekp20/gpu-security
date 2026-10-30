@@ -605,6 +605,76 @@ func TestProbeOverIPv6(t *testing.T) {
 	}
 }
 
+// TestProbeOverZoneScopedIPv6 is the regression test for a silent
+// downgrade. A link-local address on a management network is written with a
+// zone ("fe80::1%eth0"), net.Dial takes that form directly, and a URL must
+// percent-escape it (RFC 6874). Unescaped, http.NewRequest fails to build
+// before anything is sent: the TCP dial still succeeds, every HTTP probe on
+// the port fails, and an unauthenticated Ray dashboard is reported as "port
+// open, no HTTP response" at Info. The port looks probed. It was not.
+//
+// Found by FuzzNormalizeTarget's seed corpus, which asserts that an accepted
+// target survives into a probe URL as itself.
+func TestProbeOverZoneScopedIPv6(t *testing.T) {
+	ln, err := net.Listen("tcp", "[::1]:0")
+	if err != nil {
+		t.Skipf("no IPv6 loopback on this host: %v", err)
+	}
+	srv := &http.Server{
+		Handler:           discriminating(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }),
+		ReadHeaderTimeout: 2 * time.Second,
+	}
+	go func() { _ = srv.Serve(ln) }()
+	t.Cleanup(func() { _ = srv.Close() })
+
+	_, portStr, err := net.SplitHostPort(ln.Addr().String())
+	if err != nil {
+		t.Fatalf("splitting listener address: %v", err)
+	}
+	port, _ := strconv.Atoi(portStr)
+
+	// The loopback zone is the only one portable enough to test against: an
+	// interface name differs per host, and a scoped address only reaches
+	// something on the interface it names.
+	for _, zone := range []string{"lo", "lo0"} {
+		host := "::1%" + zone
+		if _, err := net.ResolveTCPAddr("tcp", net.JoinHostPort(host, portStr)); err != nil {
+			continue
+		}
+		obs := probeOne(t, host, []Check{{"ray-dashboard", port, "http", "/"}})
+		if len(obs) != 1 {
+			t.Fatalf("%s: expected 1 observation, got %+v", host, obs)
+		}
+		if !obs[0].Unauth || obs[0].Service != "ray-dashboard" {
+			t.Errorf("%s: expected an unauthenticated ray-dashboard, got %+v (an unescaped zone makes every HTTP probe fail to build)", host, obs[0])
+		}
+		if obs[0].Host != host {
+			t.Errorf("%s: the finding should name the target as given, got %q", host, obs[0].Host)
+		}
+		return
+	}
+	t.Skip("no usable IPv6 loopback zone on this host")
+}
+
+// TestURLHostEscapesTheZone pins the rendering itself, so the behaviour is
+// checked even on a host with no usable v6 loopback zone.
+func TestURLHostEscapesTheZone(t *testing.T) {
+	cases := map[string]string{
+		"fe80::1%eth0": "[fe80::1%25eth0]:8265",
+		"::1":          "[::1]:8265",
+		"10.0.0.5":     "10.0.0.5:8265",
+		"ray-head":     "ray-head:8265",
+	}
+	for host, want := range cases {
+		if got := urlHost(host, 8265); got != want {
+			t.Errorf("urlHost(%q) = %q, want %q", host, got, want)
+		}
+		if _, err := http.NewRequest(http.MethodGet, "http://"+urlHost(host, 8265)+"/", nil); err != nil {
+			t.Errorf("urlHost(%q) produced a URL http.NewRequest rejects: %v", host, err)
+		}
+	}
+}
+
 // TestProbeRefusesToNameAWildcard is the regression test for a real false
 // positive. A server that answers 2xx to everything - an SPA dev server, a
 // catch-all ingress route, a captive portal - used to be reported as

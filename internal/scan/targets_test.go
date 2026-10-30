@@ -1,7 +1,10 @@
 package scan
 
 import (
+	"net"
 	"net/netip"
+	"net/url"
+	"strings"
 	"testing"
 )
 
@@ -184,4 +187,161 @@ func TestExpandCIDRIPv6(t *testing.T) {
 	if len(hosts) != 4 || hosts[0] != "fd00::fc" {
 		t.Errorf("expected the masked /126 fd00::fc-ff, got %v", hosts)
 	}
+}
+
+// -----------------------------------------------------------------------------
+// Target validation
+//
+// The case that motivates all of this: `-targets https://10.0.0.5:8265` was
+// accepted, recorded as an unresolved host, and - with any one reachable host
+// alongside it - graded A+ with exit 0. See NormalizeTarget.
+// -----------------------------------------------------------------------------
+
+func TestNormalizeTargetAcceptsWhatWeCanProbe(t *testing.T) {
+	cases := map[string]string{
+		"10.0.0.5":                   "10.0.0.5",
+		" 10.0.0.5 ":                 "10.0.0.5",
+		"::1":                        "::1",
+		"[::1]":                      "::1",
+		"0:0:0:0:0:0:0:1":            "::1", // canonicalized: one target, not two
+		"fd00::ff":                   "fd00::ff",
+		"ray-head":                   "ray-head",
+		"ray-head.internal.acme.com": "ray-head.internal.acme.com",
+		"ray_head.internal":          "ray_head.internal", // illegal in DNS, common in practice
+		"RAY-HEAD.Internal":          "RAY-HEAD.Internal",
+		"gpu01.":                     "gpu01.", // the trailing root dot is legal
+		"node-1a2b":                  "node-1a2b",
+	}
+	for in, want := range cases {
+		got, err := NormalizeTarget(in)
+		if err != nil {
+			t.Errorf("NormalizeTarget(%q) = error %v, want it accepted", in, err)
+			continue
+		}
+		if got != want {
+			t.Errorf("NormalizeTarget(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// TestNormalizeTargetRejectsWithAUsefulHint checks the rejection AND the hint.
+// The hint is most of the value: "not a valid target" sends an operator to the
+// README mid-engagement, while "that is a URL, pass the host" is fixed in the
+// same keystroke.
+func TestNormalizeTargetRejectsWithAUsefulHint(t *testing.T) {
+	cases := []struct{ in, wantHint string }{
+		{"https://10.0.0.5:8265", "pass just the host"},
+		{"http://ray-head/dashboard", "pass just the host"},
+		{"10.0.0.5:8265", "-ports"},
+		{"[::1]:8265", "IPv6"},
+		{"10.0.0.0/24", "-cidr"},
+		{"fd00::/120", "-cidr"},
+		{"10.0.0.5/ui", "-buckets"},
+		{"ray-head # head node", "line of its own"},
+		{"ray head", "whitespace"},
+		{`"10.0.0.5"`, "cannot appear in a hostname"},
+		{"10.0.0.256", "not a valid one"},
+		{"10.0.0.05", "not a valid one"},
+		{"10.0.0", "not a valid one"},
+		{"host..internal", "empty label"},
+		{".host", "empty label"},
+		{"-timeout", "flag"},
+		{"", "empty target"},
+	}
+	for _, c := range cases {
+		_, err := NormalizeTarget(c.in)
+		if err == nil {
+			t.Errorf("NormalizeTarget(%q) was accepted; it cannot be probed, so it would be reported as an unresolved host", c.in)
+			continue
+		}
+		if !strings.Contains(err.Error(), c.wantHint) {
+			t.Errorf("NormalizeTarget(%q) said %q, want it to mention %q", c.in, err, c.wantHint)
+		}
+	}
+}
+
+// TestNormalizeTargetRejectsOverlongNames covers the two DNS length limits,
+// which are the only rejections here an operator could hit with input that is
+// otherwise shaped correctly.
+func TestNormalizeTargetRejectsOverlongNames(t *testing.T) {
+	longLabel := strings.Repeat("a", 64)
+	if _, err := NormalizeTarget(longLabel + ".internal"); err == nil {
+		t.Error("a 64-character label was accepted; the limit is 63")
+	}
+	if _, err := NormalizeTarget(strings.Repeat("a", 63) + ".internal"); err != nil {
+		t.Errorf("a 63-character label must be accepted: %v", err)
+	}
+	whole := strings.TrimSuffix(strings.Repeat("abcdefgh.", 29), ".") // 260 chars
+	if _, err := NormalizeTarget(whole); err == nil {
+		t.Errorf("a %d-character name was accepted; the limit is 253", len(whole))
+	}
+}
+
+// TestNormalizeTargetNeverEchoesACredential: a pasted URL can carry a token,
+// and this error lands on stderr, which is a kept log in any CI that gates on
+// the exit code.
+func TestNormalizeTargetNeverEchoesACredential(t *testing.T) {
+	_, err := NormalizeTarget("https://admin:s3cr3t-token@10.0.0.5:8265/")
+	if err == nil {
+		t.Fatal("a URL was accepted as a target")
+	}
+	if strings.Contains(err.Error(), "s3cr3t-token") || strings.Contains(err.Error(), "admin:") {
+		t.Errorf("the error echoed the credential back: %q", err)
+	}
+	if !strings.Contains(err.Error(), "10.0.0.5") {
+		t.Errorf("the error dropped the host, which is the whole hint: %q", err)
+	}
+}
+
+// FuzzNormalizeTarget asserts the property that keeps a scan inside its
+// authorization: anything accepted as a target must survive being put into a
+// probe URL as itself, naming no other host and introducing no path. A target
+// that changed meaning between validation and the GET would be a probe nobody
+// authorized - the same property the -ports corpus guards for ports.
+func FuzzNormalizeTarget(f *testing.F) {
+	for _, seed := range []string{
+		"10.0.0.5", "::1", "[::1]", "ray-head", "ray_head.internal", "gpu01.",
+		"https://10.0.0.5:8265", "10.0.0.5:8265", "10.0.0.0/24", "10.0.0.256",
+		"ray-head # note", "", " ", "..", "-x", "a@b", "%2e%2e", "0:0:0:0:0:0:0:1",
+		"fe80::1%eth0", "localhost\n10.0.0.5", "10.0.0.5?x=1", "x\\y",
+		// Zones found by this fuzz target: netip accepts any bytes after the
+		// '%', including the ones that terminate a host inside a URL.
+		"::%#", "::%]@elsewhere.example", "::%/evil", "::%" + strings.Repeat("e", 80),
+	} {
+		f.Add(seed)
+	}
+
+	f.Fuzz(func(t *testing.T, in string) {
+		host, err := NormalizeTarget(in)
+		if err != nil {
+			return
+		}
+		if host == "" {
+			t.Fatalf("NormalizeTarget(%q) accepted and returned an empty host", in)
+		}
+		// urlHost is what the probe itself uses to render the host, so this
+		// is the real path and not a re-implementation of it.
+		probe := "http://" + urlHost(host, 8265) + "/v1/models"
+		u, perr := url.Parse(probe)
+		if perr != nil {
+			t.Fatalf("NormalizeTarget(%q) = %q, which does not form a probe URL: %v", in, host, perr)
+		}
+		// The URL must name exactly the host we validated, on the port we
+		// chose, with the path we chose - nothing smuggled into any of the three.
+		want := strings.Trim(host, "[]")
+		if u.Hostname() != want {
+			t.Errorf("NormalizeTarget(%q) = %q, but the probe URL addresses %q", in, host, u.Hostname())
+		}
+		if u.Port() != "8265" {
+			t.Errorf("NormalizeTarget(%q) = %q, but the probe URL port is %q", in, host, u.Port())
+		}
+		if u.Path != "/v1/models" || u.RawQuery != "" || u.User != nil {
+			t.Errorf("NormalizeTarget(%q) = %q, but the probe URL is %q", in, host, u.String())
+		}
+		// And it must be dialable as an address pair, which is the other half
+		// of what the probe does with it.
+		if _, _, serr := net.SplitHostPort(net.JoinHostPort(host, "8265")); serr != nil {
+			t.Errorf("NormalizeTarget(%q) = %q, which is not a dialable host: %v", in, host, serr)
+		}
+	})
 }

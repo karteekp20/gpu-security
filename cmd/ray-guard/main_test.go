@@ -173,3 +173,70 @@ func TestProbeAllCompletesNormally(t *testing.T) {
 		t.Errorf("hosts = %+v, want one responded host (a refused port is an answer)", hosts)
 	}
 }
+
+// -----------------------------------------------------------------------------
+// Target loading
+//
+// An entry we cannot dial is recorded as "unresolved" - the same thing a real
+// DNS failure in the customer's environment looks like. With one reachable
+// host alongside it, the run graded A+ and exited 0 while a host the operator
+// put in scope was never probed. So an unprobeable entry is a usage error,
+// raised before the scanner exists.
+// -----------------------------------------------------------------------------
+
+// TestLoadTargetsRejectsAURL is the measured case:
+// `-targets https://10.0.0.5:8265,127.0.0.1` graded A+ with exit 0.
+func TestLoadTargetsRejectsAURL(t *testing.T) {
+	_, err := loadTargets("https://10.0.0.5:8265,127.0.0.1", "", "", false)
+	if err == nil {
+		t.Fatal("a dashboard URL was accepted as a target; it would be reported as an unresolved host and graded around")
+	}
+	if !strings.Contains(err.Error(), "-targets") {
+		t.Errorf("error %q should name the flag the bad entry came from", err)
+	}
+	if !strings.Contains(err.Error(), "10.0.0.5") {
+		t.Errorf("error %q should show the host the operator meant", err)
+	}
+}
+
+// TestLoadTargetsNamesTheOffendingFileLine: a 300-line host list with one bad
+// entry is otherwise a hunt, and the operator is usually mid-engagement.
+func TestLoadTargetsNamesTheOffendingFileLine(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hosts.txt")
+	body := "# acme cluster\n10.0.0.5\n\n10.0.0.6\nray-head # head node\n10.0.0.7\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("writefile: %v", err)
+	}
+	_, err := loadTargets("", path, "", false)
+	if err == nil {
+		t.Fatal("an inline comment was accepted as part of a hostname")
+	}
+	if !strings.Contains(err.Error(), "line 5") {
+		t.Errorf("error %q should name line 5", err)
+	}
+}
+
+// TestLoadTargetsAcceptsAnOrdinaryList keeps the rejection from becoming the
+// kind of strictness that refuses hosts that would have worked: comments,
+// blank lines, CRLF from a list pasted out of a Windows editor or an email,
+// underscores from internal DNS, and a bracketed v6 literal.
+func TestLoadTargetsAcceptsAnOrdinaryList(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hosts.txt")
+	body := "# acme GPU cluster, 2026-10-30\r\n10.0.0.5\r\n\r\nray_head.internal\r\n[::1]\r\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("writefile: %v", err)
+	}
+	got, err := loadTargets("gpu01.acme.internal", path, "192.0.2.0/30", false)
+	if err != nil {
+		t.Fatalf("loadTargets rejected an ordinary host list: %v", err)
+	}
+	want := []string{"gpu01.acme.internal", "10.0.0.5", "ray_head.internal", "::1", "192.0.2.1", "192.0.2.2"}
+	if len(got) != len(want) {
+		t.Fatalf("loadTargets = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("target %d = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
