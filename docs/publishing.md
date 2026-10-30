@@ -143,16 +143,24 @@ gh repo edit karteekp20/gpu-security --visibility public \
   --accept-visibility-change-consequences
 ```
 
+**Done 2026-10-30.** The repo is public at
+<https://github.com/karteekp20/gpu-security>.
+
 Then enable, in Settings → Code security:
 
-- [x] Dependabot alerts and security updates — enabled 2026-10-30
-      (`PUT /vulnerability-alerts` → 204; `automated-security-fixes` →
-      `enabled: true`). These are the two that work on a private repo.
-- [ ] Private vulnerability reporting (SECURITY.md points people at it).
-      `PUT /private-vulnerability-reporting` returns **404 while the repo is
-      private** — this one has to wait for the flip, it is not a scope problem.
-- [ ] Secret scanning. `PATCH /repos` returns **422 "Secret scanning is not
-      available for this repository"** for the same reason.
+- [x] Dependabot alerts and security updates (`PUT /vulnerability-alerts` →
+      204; `automated-security-fixes` → `enabled: true`). These are the two
+      that also work while the repo is private.
+- [x] Private vulnerability reporting (SECURITY.md points people at it).
+      Returns **404 while the repo is private** — a visibility precondition,
+      not a token scope. Enabled right after the flip.
+- [x] Secret scanning, **and push protection**. `PATCH /repos` returns 422
+      "not available for this repository" while private, for the same reason.
+
+**Verified over the path a stranger takes** — `curl` with no authentication,
+then `cosign verify-blob`: `Verified OK`, and the downloaded binary prints
+`ray-guard v0.1.1`. Worth doing separately from the authenticated check: a
+release can verify fine for its owner and still 404 for everyone else.
 
 ## Cutting the first release
 
