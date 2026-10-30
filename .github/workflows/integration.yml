@@ -17,6 +17,27 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
+      # The stack is ~11.5GB of images and ollama/ollama alone is 5.5GB,
+      # because it now bundles CUDA and MLX libraries. A standard runner does
+      # not have that much free on /, where containerd keeps its snapshots:
+      # this job failed seven nights running on "no space left on device"
+      # while extracting an Ollama layer, which looked like a detection
+      # failure in the Actions tab and was not one. Removing the preinstalled
+      # toolchains we do not use frees ~25GB.
+      #
+      # It runs BEFORE setup-go on purpose - the Go toolchain lands in
+      # /opt/hostedtoolcache, so clearing that afterwards would break the
+      # build instead of the pull. df is printed either side so the next
+      # failure here is diagnosable from the log rather than by guesswork.
+      - name: Free disk space for the image pulls
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /usr/local/share/boost /opt/hostedtoolcache/CodeQL \
+                      /usr/local/share/powershell /usr/local/.ghcup
+          docker image prune -af >/dev/null 2>&1 || true
+          df -h /
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -26,6 +47,13 @@ jobs:
 
       - name: Run detections against real Ray, Jupyter, MLflow and Ollama
         run: make test-integration
+
+      # Disk is the failure mode this job has actually had, so record what was
+      # left. A run that passes with 200MB spare is a run that is about to
+      # start failing when an upstream image grows.
+      - name: Report disk headroom
+        if: always()
+        run: df -h /
 
       # Upstream images move. When Ray changes how its dashboard answers, we
       # want the logs, because that is a detection bug in the making.
