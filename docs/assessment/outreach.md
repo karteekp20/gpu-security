@@ -48,12 +48,18 @@ the first email.
 > unauthenticated Ray, vLLM, Triton, TorchServe, Jupyter, MLflow, Slurm and
 > similar, plus GPU telemetry that quietly lists which tenant is on which GPU.
 >
-> The reason I'm writing: the ShadowRay campaign (CVE-2023-48022) found
-> exposed Ray clusters by scanning the internet and used them to mine crypto
-> and steal credentials. Nobody targeted those companies — they were just
-> reachable. TorchServe has the same shape (CVE-2023-43654) and is no longer
-> maintained upstream. CSPM tools like Wiz don't look here; they need a cloud
-> management API, and bare metal doesn't have one.
+> The reason I'm writing now: CISA added the Ray RCE (CVE-2025-62593) to its
+> Known Exploited Vulnerabilities catalogue on 17 August 2026, with a
+> three-day federal remediation deadline. The older Ray issue
+> (CVE-2023-48022) matters more for a GPU fleet, though: Ray's maintainers
+> classify it as intended behaviour on a trusted network, so there is no
+> patch coming and network exposure is the entire control. The ShadowRay
+> campaign found those clusters by scanning the internet and used them to
+> mine crypto and steal credentials — nobody targeted those companies, they
+> were reachable. TorchServe has the same shape (CVE-2023-43654) and is
+> archived upstream, so "upgrade" is not a remediation there either. CSPM
+> tools like Wiz don't look here; they need a cloud management API, and bare
+> metal doesn't have one.
 >
 > I'd like 30 minutes with whoever owns security for your clusters. I'll show
 > you the tool against a cluster I broke on purpose, and if you want, we scan
@@ -69,7 +75,19 @@ the first email.
 Why it is built this way:
 
 - **The CVE is the hook, not the product.** They can verify it in 30 seconds,
-  which is the whole reason to lead with it.
+  which is the whole reason to lead with it. Lead with the **KEV-listed**
+  one: it is dated, federal, and checkable in CISA's own catalogue.
+- **Do not describe CVE-2023-48022 as CISA-listed.** It is not in the KEV
+  catalogue, and it cannot be — it is the one the maintainers call intended
+  behaviour, which is why there is no patch. Verified against CISA's feed
+  (`known_exploited_vulnerabilities.json`), not a vendor blog. A security
+  lead is the one audience who checks, and this is exactly the kind of
+  almost-true sentence that loses the room. The unpatchable framing is the
+  stronger argument anyway: there is no version to upgrade to, so reachability
+  is the whole control.
+- **Attribute the exposure counts.** "Oligo reported over 230,000 exposed Ray
+  servers" is a citation; "I found 230,000" is a claim about work we have not
+  done, and we do not scan prospects (see below).
 - **"Free, and I want feedback" is true.** You have no credential to sell yet
   (see the do-not-claim list in [`objections.md`](objections.md)). Saying so
   is both honest and disarming.
