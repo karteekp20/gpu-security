@@ -162,6 +162,19 @@ then `cosign verify-blob`: `Verified OK`, and the downloaded binary prints
 `ray-guard v0.1.1`. Worth doing separately from the authenticated check: a
 release can verify fine for its owner and still 404 for everyone else.
 
+**Public surfaces checked 2026-10-31**, all 200 unauthenticated: repo root,
+README, SECURITY.md, threat model, the assessment kit, the v0.1.1 release page,
+`/security/policy`, and `/security/advisories/new` (so the private-reporting
+route SECURITY.md promises actually exists). Every relative link in every
+tracked `.md` resolves — 0 broken out of the whole tree — and the one external
+link (GitHub's private-reporting doc) returns 200.
+
+**One claim did not survive that read**, and it was mine from the day before:
+the release body said "needs cosign 2.4+", which I had not tested with
+anything. It now names the version actually used (v3.1.3) and marks 2.x as
+untested inference. See the decision log. Published release bodies are
+editable — the artifacts and the tag are not, which is the right split.
+
 ## Cutting the first release
 
 The release workflow triggers on a `v*` tag and does the rest: builds the

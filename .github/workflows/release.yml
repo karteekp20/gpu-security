@@ -103,9 +103,9 @@ jobs:
             ## Verifying this release
 
             Every artifact is signed with [cosign](https://docs.sigstore.dev/)
-            keyless signing, as a Sigstore bundle alongside it. Verify before
-            you run it on a cluster (needs cosign 2.4+; download the binary
-            and its `.sigstore.json`):
+            keyless signing, as a Sigstore bundle (`<artifact>.sigstore.json`,
+            bundle media type `v0.3`) next to it. Download the binary **and**
+            its bundle, then verify before you run it on a cluster:
 
             ```bash
             cosign verify-blob \
@@ -118,6 +118,13 @@ jobs:
             The identity in the bundle is this repository's release workflow,
             so a successful verification says the binary came out of a public
             build of this tag - not merely that someone signed it.
+
+            **Which cosign.** This release's own workflow verifies every
+            artifact with the cosign it pins (v3.1.4), which detects the bundle
+            format on its own. cosign added new-bundle support to `verify-blob`
+            in v2.4.0, so 2.4+ should work, but on a 2.x client you may need to
+            add `--new-bundle-format` - untested here, and we would rather say
+            so than have the command fail in front of you.
 
             Checksums are in `SHA256SUMS`; a CycloneDX SBOM ships as
             `sbom.cyclonedx.json`.
