@@ -247,3 +247,58 @@ func TestDegradedScanIsMarkedInTheSnapshot(t *testing.T) {
 		t.Error("Degraded is true for a run whose probes all completed")
 	}
 }
+
+// The resolved address is the same class of fact as the hostname, and the
+// snapshot has never carried hostnames - only a salted hash (Record.HostID).
+// It is worth its own guard because the address arrives by a new route: the
+// scanner now records which machine each named target was probed at, so
+// ScanResult carries an address map and a MultiAddress list that the snapshot
+// is built from. An internal address identifies a customer's network as
+// surely as its name does.
+func TestResolvedAddressesNeverReachTheSnapshot(t *testing.T) {
+	start := time.Date(2026, 9, 20, 10, 0, 0, 0, time.UTC)
+	const addr = "10.77.88.99"
+	hosts := []domain.HostSummary{
+		{Host: "ray.acme-confidential.internal", State: domain.HostResponded,
+			Address: addr, AddressesFound: 3},
+	}
+	r := domain.NewScanResult(start, start.Add(time.Second), hosts,
+		[]domain.Finding{{
+			RuleID: "RG-RAY-001", Title: "Unauthenticated Ray dashboard / Jobs API exposed",
+			Severity: domain.Critical, Host: "ray.acme-confidential.internal",
+			Port: 8265, Service: "ray-dashboard",
+		}})
+	if r.Addresses[hosts[0].Host] != addr {
+		t.Fatalf("precondition: the scan result should carry the probed address, got %+v", r.Addresses)
+	}
+
+	snap, err := Build(r, time.Now())
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	b, err := json.Marshal(snap)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	for what, needle := range map[string]string{
+		"a resolved address": addr,
+		"a target hostname":  "acme-confidential",
+	} {
+		if bytes.Contains(b, []byte(needle)) {
+			t.Errorf("P9 VIOLATION: the snapshot carries %s", what)
+		}
+	}
+
+	// Structurally too, on both the snapshot and its findings: a field is the
+	// way this would come back.
+	for _, rt := range []reflect.Type{reflect.TypeOf(Snapshot{}), reflect.TypeOf(Record{})} {
+		for i := 0; i < rt.NumField(); i++ {
+			switch name := strings.ToLower(rt.Field(i).Name); {
+			case strings.Contains(name, "address"), strings.Contains(name, "addr"),
+				strings.Contains(name, "ip"):
+				t.Errorf("%s.%s: the snapshot must not have a field for an address",
+					rt.Name(), rt.Field(i).Name)
+			}
+		}
+	}
+}

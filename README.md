@@ -85,6 +85,17 @@ scan that never looked at something in scope graded a clean `A+` and exited 0
 (A+ is no longer reachable at all — see §10.0 — but a clean grade on an unlooked-at
 target was the defect either way).
 
+**A hostname is resolved once and every probe for it is pinned to that one address**, which the
+report states (`probed at 10.0.0.5`, and `addresses` in the JSON). Without the pin each probe
+re-resolves, so a name with several A records is probed at a different machine from port to port
+and the report cannot say which it describes. The name still goes in the URL, the `Host` header,
+SNI and the certificate check — pinning changes which machine we dial, not what we ask it to be.
+
+A name that resolves to **several** addresses is several machines, so one is assessed and the rest
+are disclosed as a coverage gap. That gap blocks a clean grade (`N/A`, exit 7) exactly as an
+interrupted or probe-degraded run does: `A` on one node of three reads as `A` for the name. Pass
+the addresses themselves to cover them all.
+
 ### Exit codes
 
 Wire it into your own CI — the exit code encodes the worst severity found.

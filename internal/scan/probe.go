@@ -274,21 +274,89 @@ type Scanner struct {
 func New(timeout time.Duration) *Scanner { return NewWithChecks(timeout, defaultChecks()) }
 
 func NewWithChecks(timeout time.Duration, checks []Check) *Scanner {
+	s := &Scanner{timeout: timeout, checks: checks}
+	s.client, s.insecure = s.clientPair(nil)
+	return s
+}
+
+// clientPair builds the verifying and non-verifying clients, both dialing
+// through dial. A nil dial means the default dialer, which resolves the URL's
+// host itself - correct only when that host is already an address.
+func (s *Scanner) clientPair(dial dialFunc) (secure, insecure *http.Client) {
 	mk := func(skipVerify bool) *http.Client {
 		return &http.Client{
-			Timeout: timeout,
+			Timeout: s.timeout,
 			Transport: &http.Transport{
 				// #nosec G402 -- MinVersion is deliberately at the floor: see
 				// scanTLSFloor. We are measuring other people's transport
 				// posture, not protecting our own traffic.
 				TLSClientConfig:     &tls.Config{InsecureSkipVerify: skipVerify, MinVersion: scanTLSFloor},
 				DisableKeepAlives:   true,
-				TLSHandshakeTimeout: timeout,
+				TLSHandshakeTimeout: s.timeout,
+				DialContext:         dial,
 			},
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 		}
 	}
-	return &Scanner{timeout: timeout, checks: checks, client: mk(false), insecure: mk(true)}
+	return mk(false), mk(true)
+}
+
+type dialFunc func(ctx context.Context, network, address string) (net.Conn, error)
+
+// target is one host as the operator named it, pinned to the single address
+// every probe for it will dial.
+//
+// The two are separate on purpose. The address is how we reach the machine;
+// the name is what we are asking the service to be, so it stays in the URL,
+// the Host header, the SNI extension and the x509 SAN check. Dialing the
+// address but verifying against it instead of the name would turn a valid
+// certificate for ray.customer.internal into a hostname-mismatch finding, and
+// would ask a name-based virtual host for the wrong site.
+type target struct {
+	name string
+	addr string
+}
+
+// probeCtx is everything the probes for one host share: the target and the
+// two clients pinned to its address.
+type probeCtx struct {
+	t              target
+	client         *http.Client
+	insecureClient *http.Client
+}
+
+// dialTo is the address:port every probe for this target connects to.
+func (t target) dialTo(port int) string {
+	return net.JoinHostPort(t.addr, strconv.Itoa(port))
+}
+
+// pinned reports whether the dial has to be redirected at all. A target the
+// operator gave as an address needs no pinning, which keeps a /24 sweep on
+// the shared clients rather than allocating a pair per host.
+func (t target) pinned() bool { return t.addr != t.name }
+
+// clientsFor returns the clients to use for this target: the shared pair for
+// an address, or a pair pinned to the resolved address for a name.
+//
+// Pinning the dial is the whole point. Without it every probe passes the name
+// to net.Dial and the resolver answers again, so a name with several A records
+// is probed at a different machine from port to port - and the report, which
+// records the name, cannot say which.
+func (s *Scanner) clientsFor(t target) (secure, insecure *http.Client) {
+	if !t.pinned() {
+		return s.client, s.insecure
+	}
+	timeout := s.timeout
+	addr := t.addr
+	return s.clientPair(func(ctx context.Context, network, address string) (net.Conn, error) {
+		// Keep the port the URL asked for; replace only the host.
+		_, port, err := net.SplitHostPort(address)
+		if err != nil {
+			return nil, err
+		}
+		d := net.Dialer{Timeout: timeout}
+		return d.DialContext(ctx, network, net.JoinHostPort(addr, port))
+	})
 }
 
 // HostScan is everything one target yielded: whether we reached it at all,
@@ -296,7 +364,12 @@ func NewWithChecks(timeout time.Duration, checks []Check) *Scanner {
 // an empty observation list from a host that never answered is not evidence
 // of a clean host (see domain.HostState).
 type HostScan struct {
-	Host         string
+	Host string
+	// Addr is the address every probe for this host dialed, and AddrCount how
+	// many the name resolved to. Both are empty/zero when the operator passed
+	// an address: there is nothing to disclose.
+	Addr         string
+	AddrCount    int
 	State        domain.HostState
 	Observations []domain.Observation
 	// ProbeErrors counts ports whose probe failed inside the scanner - the
@@ -310,7 +383,10 @@ type HostScan struct {
 
 // Summary reduces the scan to its coverage record.
 func (h HostScan) Summary() domain.HostSummary {
-	return domain.HostSummary{Host: h.Host, State: h.State}
+	return domain.HostSummary{
+		Host: h.Host, State: h.State,
+		Address: h.Addr, AddressesFound: h.AddrCount,
+	}
 }
 
 // ProbeHost probes every distinct port once, concurrently, then runs the
@@ -320,13 +396,19 @@ func (h HostScan) Summary() domain.HostSummary {
 func (s *Scanner) ProbeHost(ctx context.Context, host string) HostScan {
 	result := HostScan{Host: host, State: domain.HostNoResponse}
 
-	// Resolve once, up front. Doing it here rather than implicitly on every
-	// dial both saves repeated lookups and - the reason it matters - lets us
-	// tell "this name does not exist" apart from "this host is firewalled".
-	if !s.resolves(ctx, host) {
+	// Resolve once, up front, and probe only the address we got. Doing it
+	// here rather than implicitly on every dial lets us tell "this name does
+	// not exist" apart from "this host is firewalled", and pins every probe
+	// for this host to one machine so the report describes a single subject.
+	t, count, ok := s.resolve(ctx, host)
+	if !ok {
 		result.State = domain.HostUnresolved
 		return result
 	}
+	if t.pinned() {
+		result.Addr, result.AddrCount = t.addr, count
+	}
+	client, insecure := s.clientsFor(t)
 
 	byPort := map[int][]Check{}
 	var ports []int
@@ -348,7 +430,7 @@ func (s *Scanner) ProbeHost(ctx context.Context, host string) HostScan {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			state, failed := s.portState(ctx, host, port)
+			state, failed := s.portState(ctx, t, port)
 			mu.Lock()
 			defer mu.Unlock()
 			if failed {
@@ -365,7 +447,7 @@ func (s *Scanner) ProbeHost(ctx context.Context, host string) HostScan {
 			if state != domain.PortOpen {
 				return
 			}
-			portObs, errs := s.probeOpenPort(ctx, host, port, byPort[port])
+			portObs, errs := s.probeOpenPort(ctx, probeCtx{t, client, insecure}, port, byPort[port])
 			if errs > 0 {
 				// The port is open but we could not characterize what is on
 				// it. Dropping the observations costs a line on the report and
@@ -393,16 +475,27 @@ func (s *Scanner) ProbeHost(ctx context.Context, host string) HostScan {
 	return result
 }
 
-// resolves reports whether the target can be turned into an address. IP
-// literals always resolve; names go to the resolver once.
-func (s *Scanner) resolves(ctx context.Context, host string) bool {
+// resolve turns a target into the single address its probes will dial, and
+// reports how many addresses the name has. IP literals resolve to themselves;
+// names go to the resolver exactly once.
+//
+// The address chosen is the resolver's first, not the numerically lowest: that
+// is the one an ordinary client would connect to, which is the posture the
+// scan is supposed to measure. What matters for correctness is that the choice
+// is made once per host rather than once per dial - a name with several A
+// records otherwise moves between machines from port to port, and the report
+// has no way to say so.
+func (s *Scanner) resolve(ctx context.Context, host string) (target, int, bool) {
 	if _, err := netip.ParseAddr(host); err == nil {
-		return true
+		return target{name: host, addr: host}, 1, true
 	}
 	ctx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
 	addrs, err := net.DefaultResolver.LookupHost(ctx, host)
-	return err == nil && len(addrs) > 0
+	if err != nil || len(addrs) == 0 {
+		return target{}, 0, false
+	}
+	return target{name: host, addr: addrs[0]}, len(addrs), true
 }
 
 // portState distinguishes closed (the host refused) from filtered (something
@@ -419,9 +512,9 @@ func (s *Scanner) resolves(ctx context.Context, host string) bool {
 // It returns a second value: whether the dial failed for a reason local to the
 // scanner. That case is not a port state at all and must not be recorded as
 // one (localResourceError).
-func (s *Scanner) portState(ctx context.Context, host string, port int) (domain.PortState, bool) {
+func (s *Scanner) portState(ctx context.Context, t target, port int) (domain.PortState, bool) {
 	d := net.Dialer{Timeout: s.timeout}
-	conn, err := d.DialContext(ctx, "tcp", net.JoinHostPort(host, strconv.Itoa(port)))
+	conn, err := d.DialContext(ctx, "tcp", t.dialTo(port))
 	if err == nil {
 		_ = conn.Close()
 		return domain.PortOpen, false
@@ -457,8 +550,9 @@ func localResourceError(err error) bool {
 		errors.Is(err, syscall.EADDRNOTAVAIL)
 }
 
-func (s *Scanner) probeOpenPort(ctx context.Context, host string, port int, checks []Check) ([]domain.Observation, int) {
-	tlsState, failed := s.tlsProbe(ctx, host, port)
+func (s *Scanner) probeOpenPort(ctx context.Context, p probeCtx, port int, checks []Check) ([]domain.Observation, int) {
+	host := p.t.name
+	tlsState, failed := s.tlsProbe(ctx, p.t, port)
 	if failed {
 		// Without knowing whether the port speaks TLS we cannot classify
 		// anything on it, and guessing "plaintext" would raise RG-TLS-002
@@ -488,7 +582,7 @@ func (s *Scanner) probeOpenPort(ctx context.Context, host string, port int, chec
 			})
 			continue
 		}
-		o, failed := s.httpProbe(ctx, host, c, tlsState)
+		o, failed := s.httpProbe(ctx, p, c, tlsState)
 		if failed {
 			probeErrors++
 			continue
@@ -520,7 +614,7 @@ func (s *Scanner) probeOpenPort(ctx context.Context, host string, port int, chec
 	obs = append(obs, tcpOnly...)
 	switch {
 	case len(identified) > 0 && needsWildcardControl(identified) &&
-		s.answersAnything(ctx, host, port, tlsState):
+		s.answersAnything(ctx, p, port, tlsState):
 		// The port answered 2xx on a service's health path - and on a path
 		// that cannot exist. It discriminates nothing, so neither can we.
 		obs = append(obs, domain.Observation{
@@ -565,8 +659,8 @@ func needsWildcardControl(identified []domain.Observation) bool {
 // A failed control request counts as "discriminates fine": if we cannot get
 // an answer we keep the attribution we already have, because silently
 // downgrading a real finding is the worse error.
-func (s *Scanner) answersAnything(ctx context.Context, host string, port int, tlsState domain.TLSState) bool {
-	o, _ := s.httpProbe(ctx, host, Check{ServiceUnknown, port, "http", controlPath}, tlsState)
+func (s *Scanner) answersAnything(ctx context.Context, p probeCtx, port int, tlsState domain.TLSState) bool {
+	o, _ := s.httpProbe(ctx, p, Check{ServiceUnknown, port, "http", controlPath}, tlsState)
 	return o.Unauth
 }
 
@@ -642,12 +736,17 @@ func (s *Scanner) handshakeTimeout() time.Duration {
 // expiry date - never the subject, issuer CN, serial, or chain bytes (P3).
 // It returns a second value: whether the handshake failed for a reason local
 // to the scanner, in which case the result says nothing about the port.
-func (s *Scanner) tlsProbe(ctx context.Context, host string, port int) (domain.TLSState, bool) {
+func (s *Scanner) tlsProbe(ctx context.Context, t target, port int) (domain.TLSState, bool) {
 	d := &net.Dialer{Timeout: s.handshakeTimeout()}
+	// Dial the pinned address, but send the operator's name as SNI: a
+	// TLS-terminating proxy selects the certificate from SNI, so handshaking
+	// with the address would be served the default virtual host's certificate
+	// and we would classify the wrong one.
 	// #nosec G402 -- see scanTLSFloor: a scanner that refuses obsolete TLS
 	// cannot see what is behind it, and cannot report that it is obsolete.
-	conn, err := tls.DialWithDialer(d, "tcp", net.JoinHostPort(host, strconv.Itoa(port)),
-		&tls.Config{InsecureSkipVerify: true, MinVersion: scanTLSFloor})
+	conn, err := tls.DialWithDialer(d, "tcp", t.dialTo(port),
+		&tls.Config{InsecureSkipVerify: true, MinVersion: scanTLSFloor,
+			ServerName: sniName(t.name)})
 	if err != nil {
 		return domain.TLSState{Enabled: false}, localResourceError(err)
 	}
@@ -673,7 +772,7 @@ func (s *Scanner) tlsProbe(ctx context.Context, host string, port int) (domain.T
 	if _, verr := leaf.Verify(x509.VerifyOptions{
 		// x509 has no concept of a zone, and a scoped address would never
 		// match a SAN. Verify the address itself.
-		DNSName: stripZone(host), Roots: roots, Intermediates: inter,
+		DNSName: stripZone(t.name), Roots: roots, Intermediates: inter,
 	}); verr != nil {
 		state.Issue = classifyTLSError(verr, leaf)
 	}
@@ -722,6 +821,17 @@ func urlHost(host string, port int) string {
 	return net.JoinHostPort(host, strconv.Itoa(port))
 }
 
+// sniName is the name to offer as SNI, or "" to offer none. An address is
+// never a legal SNI value (RFC 6066 forbids literals), and Go would silently
+// send nothing; returning "" says so explicitly. A zone is local addressing,
+// not identity, so it never belongs in SNI either.
+func sniName(host string) string {
+	if _, err := netip.ParseAddr(stripZone(host)); err == nil {
+		return ""
+	}
+	return host
+}
+
 // stripZone removes an IPv6 zone from an address. The zone is a local
 // interface name: it is how we reach the host, not part of its identity.
 func stripZone(host string) string {
@@ -737,7 +847,8 @@ func stripZone(host string) string {
 // it. Status code and headers-level facts only - never content (P3).
 // It returns a second value: whether the request failed for a reason local to
 // the scanner, which is not a fact about the service.
-func (s *Scanner) httpProbe(ctx context.Context, host string, c Check, tlsState domain.TLSState) (domain.Observation, bool) {
+func (s *Scanner) httpProbe(ctx context.Context, p probeCtx, c Check, tlsState domain.TLSState) (domain.Observation, bool) {
+	host := p.t.name
 	o := domain.Observation{Host: host, Port: c.Port, Service: c.Service, State: domain.PortOpen, TLS: tlsState}
 	failed := false
 
@@ -752,9 +863,9 @@ func (s *Scanner) httpProbe(ctx context.Context, host string, c Check, tlsState 
 			continue
 		}
 		req.Header.Set("User-Agent", "ray-guard/"+domain.Version+" (+benign posture probe)")
-		client := s.client
+		client := p.client
 		if tlsState.Enabled && tlsState.Issue != "" {
-			client = s.insecure
+			client = p.insecureClient
 		}
 		resp, err := client.Do(req)
 		if err != nil {

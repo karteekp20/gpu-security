@@ -30,7 +30,10 @@ type sevCount struct {
 }
 
 type hostGroup struct {
-	Host     string
+	Host string
+	// Address is the address this host's probes dialed, set only when the
+	// operator named a host rather than an address.
+	Address  string
 	Findings []domain.Finding
 }
 
@@ -73,7 +76,8 @@ func newView(r domain.ScanResult) view {
 			continue
 		}
 		index[f.Host] = len(hosts)
-		hosts = append(hosts, hostGroup{Host: f.Host, Findings: []domain.Finding{f}})
+		hosts = append(hosts, hostGroup{Host: f.Host, Address: r.Addresses[f.Host],
+			Findings: []domain.Finding{f}})
 	}
 
 	hasRay := false
@@ -190,6 +194,11 @@ func PrintSummary(w io.Writer, r domain.ScanResult) {
 		fmt.Fprintf(w, "WARNING: %d probe(s) failed inside the scanner, so this scan under-reports.\n"+
 			"         Lower -concurrency, or raise the hard limit (ulimit -Hn), then re-run.\n", r.ProbeErrors)
 	}
+	for _, h := range v.MultiAddress {
+		fmt.Fprintf(w, "WARNING: %s resolves to %d addresses; only %s was assessed.\n"+
+			"         The others are separate machines. Pass them as targets to cover them.\n",
+			h.Host, h.AddressesFound, h.Address)
+	}
 	for _, c := range v.SevCounts {
 		fmt.Fprintf(w, "  %-8s %d\n", c.Severity, c.Count)
 	}
@@ -302,6 +311,7 @@ th{color:var(--muted);font-weight:600;font-size:.85rem}
 .sev::before{content:"\25CF  ";font-size:.9em}
 .pill{display:inline-block;background:var(--card);border:1px solid var(--line);border-radius:.3rem;padding:.05rem .4rem;font-size:.78rem;margin:.1rem .3rem .1rem 0;white-space:nowrap}
 .ruleid{white-space:nowrap}
+.at{font-family:-apple-system,Segoe UI,Roboto,sans-serif;font-size:.78rem;font-weight:400;color:var(--muted)}
 .rem{color:var(--muted);font-size:.9rem;display:block;margin-top:.25rem}
 .note{background:var(--card);border-left:3px solid var(--accent);border-radius:0 .4rem .4rem 0;padding:.9rem 1.1rem;font-size:.92rem}
 .foot{color:var(--muted);font-size:.8rem;margin-top:2.5rem;border-top:1px solid var(--line);padding-top:1rem}
@@ -359,6 +369,19 @@ result.{{else}}The grade above covers only the targets that responded.{{end}}</p
 </div>
 {{end}}
 
+{{if .MultiAddress}}
+<div class="warn">
+<p><strong>Coverage gap &mdash; {{.AddressesUnassessed}} address(es) behind the names you gave
+were not assessed.</strong> A name that resolves to several addresses is several machines. One
+address per name was probed, so the result below describes that machine and not the others.</p>
+<ul>
+{{range .MultiAddress}}<li><code>{{.Host}}</code> &mdash; resolves to {{.AddressesFound}} addresses; <code>{{.Address}}</code> was assessed, {{.UnassessedAddresses}} were not</li>
+{{end}}</ul>
+<p>To cover them all, pass the addresses themselves as targets. This also keeps the report
+traceable: a finding against a name cannot be re-checked without knowing which machine answered.</p>
+</div>
+{{end}}
+
 {{if .FixFirst}}
 <h2>Fix these first</h2>
 <ol class="fix">
@@ -393,7 +416,7 @@ request it &mdash; and executed nothing. No response body was inspected, parsed,
 {{if .Hosts}}
 {{range .Hosts}}
 <div class="hostgroup">
-<h3>{{.Host}}</h3>
+<h3>{{.Host}}{{if .Address}} <span class="at">probed at {{.Address}}</span>{{end}}</h3>
 <div class="wrapper">
 <table><thead><tr><th>Severity</th><th>Rule</th><th>Finding</th><th>Port</th></tr></thead><tbody>
 {{range .Findings}}<tr>

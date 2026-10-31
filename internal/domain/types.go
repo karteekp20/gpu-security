@@ -11,6 +11,7 @@ package domain
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -99,6 +100,25 @@ const (
 type HostSummary struct {
 	Host  string    `json:"host"`
 	State HostState `json:"state"`
+	// Address is the single address every probe for this host dialed. It is
+	// set only when the operator named a host rather than an address, because
+	// that is the only case where the report would otherwise not say which
+	// machine was assessed: a report for "ray.customer.internal" that cannot
+	// be traced back to an address cannot be re-checked, and on a cluster
+	// behind round-robin DNS it does not even identify the host it describes.
+	Address string `json:"address,omitempty"`
+	// AddressesFound is how many addresses the name resolved to. More than
+	// one means the name fans out across machines and this scan covered one
+	// of them - see ScanResult.AddressesUnassessed, which gates clean grades.
+	AddressesFound int `json:"addresses_found,omitempty"`
+}
+
+// UnassessedAddresses is how many of this host's addresses were never probed.
+func (h HostSummary) UnassessedAddresses() int {
+	if h.AddressesFound > 1 {
+		return h.AddressesFound - 1
+	}
+	return 0
 }
 
 // Observation is a benign, read-only fact discovered about a target.
@@ -200,18 +220,30 @@ type ScanResult struct {
 	// telling us anything about a target: the open-file or ephemeral-port
 	// limit. Any non-zero value means the measurement itself is unreliable, so
 	// it gates clean grades exactly as Interrupted does.
-	ProbeErrors       int              `json:"probe_errors,omitempty"`
-	HostsResponded    int              `json:"hosts_responded"`
-	HostsUnanswered   int              `json:"hosts_unanswered"`
-	HostsUnresolved   int              `json:"hosts_unresolved"`
-	HostsProbeFailed  int              `json:"hosts_probe_failed,omitempty"`
-	Unreachable       []HostSummary    `json:"unreachable,omitempty"`
-	HostsWithFindings int              `json:"hosts_with_findings"`
-	Findings          []Finding        `json:"findings"`
-	Summary           map[Severity]int `json:"summary"`
-	Score             int              `json:"score"`
-	Grade             Grade            `json:"grade"`
-	GradeReason       string           `json:"grade_reason"`
+	ProbeErrors      int           `json:"probe_errors,omitempty"`
+	HostsResponded   int           `json:"hosts_responded"`
+	HostsUnanswered  int           `json:"hosts_unanswered"`
+	HostsUnresolved  int           `json:"hosts_unresolved"`
+	HostsProbeFailed int           `json:"hosts_probe_failed,omitempty"`
+	Unreachable      []HostSummary `json:"unreachable,omitempty"`
+	// AddressesUnassessed counts addresses behind the scanned names that were
+	// never probed, and MultiAddress names the hosts they belong to. A name
+	// with several addresses is several machines; probing one of them and
+	// reporting a clean result is the false all-clear in a new shape, so a
+	// non-zero count gates clean grades exactly as Interrupted does.
+	AddressesUnassessed int           `json:"addresses_unassessed,omitempty"`
+	MultiAddress        []HostSummary `json:"multi_address,omitempty"`
+	// Addresses maps each named target to the address its probes dialed. It
+	// holds only names, so a scan given addresses or a CIDR block carries
+	// none. Without it a report for a name says nothing about which machine
+	// it describes, and cannot be re-checked against that machine later.
+	Addresses         map[string]string `json:"addresses,omitempty"`
+	HostsWithFindings int               `json:"hosts_with_findings"`
+	Findings          []Finding         `json:"findings"`
+	Summary           map[Severity]int  `json:"summary"`
+	Score             int               `json:"score"`
+	Grade             Grade             `json:"grade"`
+	GradeReason       string            `json:"grade_reason"`
 }
 
 // Inconclusive reports whether the scan reached anything at all. A scan that
@@ -282,6 +314,16 @@ func NewResult(run Run) ScanResult {
 		Findings:          findings, Summary: summary,
 	}
 	for _, h := range hosts {
+		if h.Address != "" {
+			if r.Addresses == nil {
+				r.Addresses = map[string]string{}
+			}
+			r.Addresses[h.Host] = h.Address
+		}
+		if n := h.UnassessedAddresses(); n > 0 {
+			r.AddressesUnassessed += n
+			r.MultiAddress = append(r.MultiAddress, h)
+		}
 		switch h.State {
 		case HostResponded:
 			r.HostsResponded++
@@ -297,7 +339,8 @@ func NewResult(run Run) ScanResult {
 		}
 	}
 
-	r.Score, r.Grade = gradeFor(summary, r.HostsResponded, !run.Interrupted && run.ProbeErrors == 0)
+	complete := !run.Interrupted && run.ProbeErrors == 0 && r.AddressesUnassessed == 0
+	r.Score, r.Grade = gradeFor(summary, r.HostsResponded, complete)
 	r.GradeReason = gradeReason(r.Grade, findings, r)
 	return r
 }
@@ -351,6 +394,9 @@ func gradeReason(g Grade, findings []Finding, r ScanResult) string {
 	}
 	if r.Degraded() {
 		return degradedReason(g, findings, r)
+	}
+	if r.AddressesUnassessed > 0 {
+		return unassessedAddressReason(g, findings, r)
 	}
 	switch g {
 	case GradeInconclusive:
@@ -438,6 +484,36 @@ func degradedReason(g Grade, findings []Finding, r ScanResult) string {
 	}
 	return "Treat this as a floor, not a verdict: " + count + ", so exposure may have " +
 		"been missed. What was observed: " + worst.Title + ". " + remedy
+}
+
+// unassessedAddressReason explains a run that covered one address of a name
+// that has several. The remedy is the operator's and it is specific, so it is
+// stated: pass the addresses, which is also the only way to keep the report
+// traceable to particular machines.
+//
+// The gap is disclosed instead of graded because a note beside a 3rem letter
+// loses to the letter - the same reasoning that made grades tier-scoped. "A,
+// but we only looked at one of your three nodes" reads as A.
+func unassessedAddressReason(g Grade, findings []Finding, r ScanResult) string {
+	var names []string
+	for _, h := range r.MultiAddress {
+		names = append(names, fmt.Sprintf("%s resolves to %d addresses, %s was assessed",
+			h.Host, h.AddressesFound, h.Address))
+	}
+	detail := strings.Join(names, "; ")
+	const remedy = "Pass the addresses themselves as targets to cover them all."
+	if g == GradeInconclusive {
+		return "No grade: " + detail + ". A name that fans out across machines " +
+			"was assessed on one of them, so there is no basis for a clean result. " +
+			remedy
+	}
+	worst := WorstFinding(findings)
+	if worst == nil {
+		return detail + ". " + remedy
+	}
+	return "Treat this as a floor, not a verdict: " + detail +
+		", so exposure on the others would not have been seen. What was observed: " +
+		worst.Title + ". " + remedy
 }
 
 var sevOrder = []Severity{Critical, High, Medium, Low, Info}

@@ -551,3 +551,93 @@ func TestResultCarriesItsTier(t *testing.T) {
 		t.Errorf("Tier = %q, want %q", got, TierL1)
 	}
 }
+
+// A name that resolves to several addresses is several machines. Probing one
+// of them and reporting a clean result is the 2026-09-25 false all-clear in a
+// new shape - the grade would describe one node of a fleet the operator named
+// as a whole - so an unassessed sibling address gates clean grades exactly as
+// an interrupted or degraded run does.
+func TestAClearScanWithUnassessedAddressesCannotGradeClean(t *testing.T) {
+	hosts := []HostSummary{
+		{Host: "ray.customer.internal", State: HostResponded, Address: "10.0.0.5", AddressesFound: 3},
+	}
+	r := NewScanResult(time.Now(), time.Now().Add(time.Second), hosts, nil)
+
+	if r.AddressesUnassessed != 2 {
+		t.Errorf("AddressesUnassessed = %d, want 2 (3 found, 1 probed)", r.AddressesUnassessed)
+	}
+	if r.Grade != GradeInconclusive {
+		t.Errorf("grade %q with 2 of 3 addresses never probed; want %q - a clean letter here "+
+			"claims the whole name was assessed", r.Grade, GradeInconclusive)
+	}
+	if r.Graded() {
+		t.Error("a scan that covered one address of three must not report a gradeable verdict")
+	}
+	// The reason has to name the host, the count and the address, because the
+	// operator's next action is to pass the other addresses as targets.
+	for _, want := range []string{"ray.customer.internal", "3 addresses", "10.0.0.5", "Pass the addresses"} {
+		if !strings.Contains(r.GradeReason, want) {
+			t.Errorf("grade reason does not mention %q: %s", want, r.GradeReason)
+		}
+	}
+	if len(r.MultiAddress) != 1 || r.MultiAddress[0].Host != "ray.customer.internal" {
+		t.Errorf("MultiAddress = %+v, want the one fanned-out name", r.MultiAddress)
+	}
+}
+
+// An observed exposure stands whatever the coverage: it was seen. The grade is
+// stated as a floor rather than withheld, which is the same asymmetry that
+// governs interrupted and degraded runs.
+func TestAnObservedFindingStillGradesWithUnassessedAddresses(t *testing.T) {
+	hosts := []HostSummary{
+		{Host: "ray.customer.internal", State: HostResponded, Address: "10.0.0.5", AddressesFound: 2},
+	}
+	findings := []Finding{{RuleID: "RG-RAY-001", Title: "Unauthenticated Ray dashboard / Jobs API exposed",
+		Severity: Critical, Host: "ray.customer.internal", Port: 8265}}
+	r := NewScanResult(time.Now(), time.Now().Add(time.Second), hosts, findings)
+
+	if r.Grade != "F" {
+		t.Errorf("grade %q; an observed critical is observed regardless of coverage, want F", r.Grade)
+	}
+	if !strings.Contains(r.GradeReason, "floor") {
+		t.Errorf("a finding-driven grade under partial address coverage must be stated as a floor: %s",
+			r.GradeReason)
+	}
+}
+
+// One address is the ordinary case and must cost nothing: no disclosure, no
+// gate, and a clean scan still reaches the tier ceiling.
+func TestASingleAddressNameGradesNormally(t *testing.T) {
+	hosts := []HostSummary{
+		{Host: "ray.customer.internal", State: HostResponded, Address: "10.0.0.5", AddressesFound: 1},
+	}
+	r := NewScanResult(time.Now(), time.Now().Add(time.Second), hosts, nil)
+
+	if r.AddressesUnassessed != 0 || len(r.MultiAddress) != 0 {
+		t.Errorf("a name with one address has nothing unassessed: %d / %+v",
+			r.AddressesUnassessed, r.MultiAddress)
+	}
+	if r.Grade != L1GradeCeiling {
+		t.Errorf("grade %q, want %q - one address is full coverage of that name", r.Grade, L1GradeCeiling)
+	}
+	if got := r.Addresses["ray.customer.internal"]; got != "10.0.0.5" {
+		t.Errorf("Addresses[name] = %q, want the address probed; a report that cannot name "+
+			"the machine cannot be re-checked", got)
+	}
+}
+
+// A scan given addresses carries no address map at all: there is nothing to
+// disclose, and a /24 sweep must not grow 254 redundant entries.
+func TestAddressTargetsCarryNoAddressMap(t *testing.T) {
+	hosts := []HostSummary{
+		{Host: "10.0.0.5", State: HostResponded},
+		{Host: "10.0.0.6", State: HostResponded},
+	}
+	r := NewScanResult(time.Now(), time.Now().Add(time.Second), hosts, nil)
+	if len(r.Addresses) != 0 {
+		t.Errorf("Addresses = %+v, want empty for address targets", r.Addresses)
+	}
+	if r.Grade != L1GradeCeiling {
+		t.Errorf("grade %q, want %q", r.Grade, L1GradeCeiling)
+	}
+}
