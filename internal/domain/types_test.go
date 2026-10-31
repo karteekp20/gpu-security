@@ -36,7 +36,7 @@ func TestGradeIsDrivenByWorstFinding(t *testing.T) {
 		wantGrade Grade
 		wantScore int
 	}{
-		{"clean", nil, "A+", 100},
+		{"clean", nil, L1GradeCeiling, L1CleanScore},
 		{"info only", []Finding{f("RG-EXPOSURE-001", Info, "h", 9000)}, "A", 90},
 		{"low", []Finding{f("RG-TRITON-002", Low, "h", 8002)}, "A", 90},
 		{"medium", []Finding{f("RG-OLLAMA-001", Medium, "h", 11434)}, "B", 78},
@@ -214,8 +214,9 @@ func TestUnreachableTargetsNeverGradeClean(t *testing.T) {
 // A host that answers - even by refusing every port - is real evidence.
 func TestRespondingHostWithNoServicesIsGenuinelyClean(t *testing.T) {
 	r := resultWithHosts(responded("10.0.0.1"))
-	if r.Grade != "A+" || r.Score != 100 {
-		t.Errorf("a live host running nothing is a real A+, got %s/%d", r.Grade, r.Score)
+	if r.Grade != L1GradeCeiling || r.Score != L1CleanScore {
+		t.Errorf("a live host running nothing is a genuine clean L1 result, want %s/%d, got %s/%d",
+			L1GradeCeiling, L1CleanScore, r.Grade, r.Score)
 	}
 	if r.Inconclusive() || r.ExitCode() != 0 {
 		t.Errorf("a genuine clean result must exit 0, got %d", r.ExitCode())
@@ -228,8 +229,8 @@ func TestPartialCoverageIsDisclosedOnACleanGrade(t *testing.T) {
 		HostSummary{Host: "bad.invalid", State: HostUnresolved})
 	r := resultWithHosts(hosts)
 
-	if r.Grade != "A+" {
-		t.Errorf("one responding clean host still grades A+, got %s", r.Grade)
+	if r.Grade != L1GradeCeiling {
+		t.Errorf("one responding clean host still earns the L1 ceiling, got %s", r.Grade)
 	}
 	if !r.PartialCoverage() {
 		t.Error("expected partial coverage to be flagged")
@@ -384,7 +385,7 @@ func TestCompletedScanKeepsItsRequestedCount(t *testing.T) {
 	if r.Interrupted {
 		t.Error("Interrupted = true on a completed scan")
 	}
-	if r.Grade != "A+" || !r.Graded() {
+	if r.Grade != L1GradeCeiling || !r.Graded() {
 		t.Errorf("completed clean scan graded %s; the interrupted gate must not catch it", r.Grade)
 	}
 }
@@ -479,5 +480,74 @@ func TestInterruptionOutranksDegradationInTheExplanation(t *testing.T) {
 	}
 	if r.ExitCode() != ExitInterrupted {
 		t.Errorf("exit code %d, want %d", r.ExitCode(), ExitInterrupted)
+	}
+}
+
+// TestL1CannotEarnAPlus is the guard for CLAUDE.md 10.0's tier scoping.
+//
+// A+ means "hardware attestation cryptographically verified, fabric isolation
+// evidenced" - claims an agentless port-and-TLS scan cannot make. For as long
+// as the grade and the credential are the same number, a clean L1 scan that
+// printed A+ would put that meaning on a port scan, and the Phase-1 credential
+// would sign it as "Issuable - Gold".
+//
+// The sweep is exhaustive over the severity combinations gradeFor branches on,
+// rather than spot-checking the clean case, because the hazard is a future
+// branch that returns A+ for some other reason.
+func TestL1CannotEarnAPlus(t *testing.T) {
+	sevs := []Severity{Critical, High, Medium, Low, Info}
+	for mask := 0; mask < 1<<len(sevs); mask++ {
+		var findings []Finding
+		for i, sev := range sevs {
+			if mask&(1<<i) != 0 {
+				findings = append(findings, f("RG-TEST-001", sev, "h", 1))
+			}
+		}
+		t0 := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
+		for _, run := range []Run{
+			{Start: t0, End: t0, Requested: 1, Hosts: responded("h"), Findings: findings},
+			{Start: t0, End: t0, Requested: 1, Hosts: responded("h"), Findings: findings, Interrupted: true},
+			{Start: t0, End: t0, Requested: 1, Hosts: responded("h"), Findings: findings, ProbeErrors: 1},
+			{Start: t0, End: t0, Requested: 1, Findings: findings},
+		} {
+			r := NewResult(run)
+			if r.Grade == GradeAPlus {
+				t.Fatalf("L1 produced A+ for findings=%v interrupted=%v probeErrors=%d: "+
+					"A+ claims attested hardware, which this tier never assesses",
+					severitiesOf(findings), run.Interrupted, run.ProbeErrors)
+			}
+			if r.Score > L1CleanScore {
+				t.Fatalf("L1 scored %d, above the ceiling %d: scores 95-100 are the A+ band",
+					r.Score, L1CleanScore)
+			}
+		}
+	}
+}
+
+func severitiesOf(findings []Finding) []Severity {
+	out := make([]Severity, 0, len(findings))
+	for _, f := range findings {
+		out = append(out, f.Severity)
+	}
+	return out
+}
+
+// TestCleanGradeStatesItsCeiling: the limit belongs with the grade, because the
+// grade is what gets quoted out of the report.
+func TestCleanGradeStatesItsCeiling(t *testing.T) {
+	for _, r := range []ScanResult{
+		resultWithHosts(responded("10.0.0.1")),
+		resultWith(f("RG-EXPOSURE-001", Info, "h", 9000)),
+	} {
+		if !strings.Contains(r.GradeReason, "highest grade a Level 1 assessment can earn") {
+			t.Errorf("a clean L1 grade must say it is the tier's ceiling, got %q", r.GradeReason)
+		}
+	}
+}
+
+// The tier travels with the result so a grade is never read without its scope.
+func TestResultCarriesItsTier(t *testing.T) {
+	if got := resultWithHosts(responded("10.0.0.1")).Tier; got != TierL1 {
+		t.Errorf("Tier = %q, want %q", got, TierL1)
 	}
 }

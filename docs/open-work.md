@@ -6,7 +6,7 @@ re-deriving context. It is the *live backlog*. It is **not** a source of truth:
 outrank anything written here. If this file and a decision row disagree, the
 decision row wins and this file is wrong.
 
-**Last updated:** 2026-10-31 · **`main` at the time:** `8b32710` (+ PR #5: G1, G7, G8)
+**Last updated:** 2026-10-31 · **`main` at the time:** `14b3380` (+ PR #6: G2)
 
 ---
 
@@ -36,7 +36,7 @@ the reason is not that it is hard.
 | # | Question | Status | Recommendation on file |
 | :-- | :-- | :-- | :-- |
 | Q1 | Final product name | **Open.** Not finalised as of 2026-10-31; external review used "Vrampart" but that is not a decision | Keep `[Platform]` and the `RG-` rule prefix as placeholders (§20). Do not bake a name into rule IDs |
-| Q2 | One grade, or a grade per tier? | **Open — this blocks G2, the biggest item** | **Per-tier for the Phase-1 credential; cap L1 at `A` now.** Zero findings → `94/A` (top of §10.0's A band); `A+` (95–100) stays reserved for attested tiers; label output "L1 grade". Rejected: one grade plus a prose qualifier — that is what exists today and is exactly what got flagged |
+| Q2 | One grade, or a grade per tier? | **Closed 2026-10-31 — per tier.** Implemented in PR #6 | Ceilings L1 → A, L2 → A, L3 → A+; grades reported as `<tier>: <grade>`; L1 alone yields a report and no credential. See the decision row |
 | Q3 | Strengthen the Ray evidence path? | **Closed 2026-10-31** | Done, but via `/api/version`, not `/api/jobs/`. See the decision row |
 
 ---
@@ -55,6 +55,7 @@ review; C-items are chart work; D-items are decisions to record.**
 | G4 | Ray identified by `/api/version`, not `/`; report separates observation from consequence; the "remote code execution" sentence is keyed to `codeExecutionRules` rather than to severity | PR #4, `8b32710`. Also eliminated a **false Critical**: a plain web server on 8265 answers 200 on `/` and 404 on the wildcard control, so it was graded **F / critical RG-RAY-001** and is now **A / Info** |
 | G1 | **Four** titles no longer claim internet exposure (`RG-TRITON-002`, `RG-TORCHSERVE-002`, `RG-DCGM-001`, and `RG-BUCKET-001`, which the review did not name but had the same defect). Both Go and Rego sides, with a note in `detect.go` so the reason survives the next person who wants a punchier title. Verified by mutation: drifting one Rego title fails `TestGoAndRegoRuleSetsAgree` | PR #5 |
 | G7 | The report prints a "How this grade was reached" table: first-match-wins rows from `gradeFor`, plus the ordering point — an observed finding stands even on an unfinished scan, but an unfinished scan can never earn a clean grade. HTML only; the matrix is static documentation, not data about a particular scan, so it is not duplicated into every JSON | PR #5 |
+| G2 | **Grades are tier-scoped.** §10.0 rewritten: per-tier ceilings (L1 → A, L2 → A, L3 → A+), grades reported as `<tier>: <grade>`, credential issuance keyed to which tiers were assessed, L1 alone yields no credential. Scanner: clean L1 is `94/A`, `tier: "L1"` in the JSON, ceiling stated with the grade. `TestL1CannotEarnAPlus` sweeps all 32 severity combinations across completed/interrupted/degraded/unreached runs; verified by mutation | PR #6 |
 | G8 | §3 now reads "Agentless, read-only **active** probe … (one benign GET per check plus a wildcard control; nothing is installed and no credentials are used)" | PR #5 |
 
 ### Open — no decision needed, safe to start
@@ -63,12 +64,6 @@ review; C-items are chart work; D-items are decisions to record.**
 | :-- | :-- | :-- | :-- |
 | **G5** | The report cannot be reproduced from itself. `-ports`, `-cidr`, `-timeout`, `-concurrency` are absent. A host recorded `no-response` at `-timeout 1s` is a different claim from the same host at 5s, and the reader cannot tell which they hold | `domain.Run` / `ScanResult` at `internal/domain/types.go:214`; flags in `cmd/ray-guard/main.go` | A reader can reproduce the scan from the report alone. Already present and **not** to be re-added: `scanned_from`, duration, coverage counts, `probe_errors`, probe-failed vs filtered |
 | **G6** | Half done. The report narrative now says the version was not determined and marks `CVE-2025-62593` applicable-if-vulnerable, but `detect.go:21` still attaches both CVEs to the finding and the JSON still emits `"cves"` unqualified, so a machine consumer sees an unqualified claim | `internal/scan/detect.go:21`; `domain.Finding.CVEs` | A version-dependent CVE is not asserted about a host whose version is unknown, in **JSON as well as prose**. `CVE-2023-48022` stays as-is: no fixed version exists, so reachability is the whole control |
-
-### Open — blocked on Q2
-
-| # | Item | Anchors |
-| :-- | :-- | :-- |
-| **G2** | An L1-only scan can print **A+ (100/100)**, while §10.0 reserves A+ for L3-verified hardware attestation ("Issuable — Gold"). Today the report footer scopes it honestly. Once the Phase-1 credential is issued off the grade, this path signs a Gold attestation for hardware never examined — structurally the dark-host closure hazard one layer up | `internal/domain/types.go:293`; the clean-grade reason at `:333`; `CLAUDE.md §10.0`. Needs a dated row superseding §10.0 |
 
 ### Open — larger, and worth doing in this order
 

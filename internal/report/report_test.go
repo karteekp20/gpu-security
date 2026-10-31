@@ -175,8 +175,30 @@ func TestCleanScanReportsNoFindings(t *testing.T) {
 	if !strings.Contains(html, "No exposure findings") {
 		t.Error("a clean scan should say so plainly")
 	}
-	if !strings.Contains(html, `class="grade g-Aplus"`) {
-		t.Error("a clean scan should render an A+ badge with a CSS-safe class name")
+	if !strings.Contains(html, `class="grade g-A"`) {
+		t.Error("a clean scan should render an A badge")
+	}
+	// A is the ceiling at L1, and the report has to say so where the grade is,
+	// not in a footnote - the grade is the part that gets quoted.
+	if !strings.Contains(html, "A is the ceiling at this tier") {
+		t.Error("the report must state that A+ is unavailable at this tier")
+	}
+	if strings.Contains(html, `class="grade g-Aplus"`) {
+		t.Error("a Level 1 scan rendered an A+ badge; A+ claims attested hardware")
+	}
+}
+
+// gradeClass still has to handle A+ even though L1 never produces it: the grade
+// exists for the attested tiers, and "+" is not valid in a CSS class name, so
+// the mapping is covered directly rather than incidentally through a fixture.
+func TestGradeClassIsCSSSafe(t *testing.T) {
+	for grade, want := range map[domain.Grade]string{
+		"A+": "Aplus", "A": "A", "B": "B", "C": "C", "F": "F",
+		domain.GradeInconclusive: "NA",
+	} {
+		if got := gradeClass(grade); got != want {
+			t.Errorf("gradeClass(%q) = %q, want %q", grade, got, want)
+		}
 	}
 }
 

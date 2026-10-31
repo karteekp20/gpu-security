@@ -98,6 +98,8 @@ The deployment model is designed to eliminate CISO friction on multi-million-dol
 | **L2** | Kubernetes DaemonSet | Read-only container. NVML telemetry, `/dev/nvidia*` mount perms, driver/firmware versions, container privilege, K8s config hygiene, **CC-mode *claimed* state observation** (via `nvmlDeviceGetConfidentialComputeStatus`, read-only). | **Low** (open-source, read-only) | After L1 traction |
 | **L3** | Deep eBPF & DPU Sidecar | Kernel/fabric tracing, InfiniBand P_Key/M_Key audit, **cryptographic CC-mode attestation verification** (SPDM/quote), CUDA/VRAM checks, DPU (DOCA) hardware attestation, cross-tenant traffic detection. | **Medium/High** (root/eBPF) | **ONLY on paying-customer demand (P1)** |
 
+**Grade ceilings per tier (§10.0):** L1 → **A**, L2 → **A**, L3 → **A+**. A tier cannot award a grade for evidence it never collects, and no grade is ever reported as a bare letter.
+
 **The value ladder:** L1 = discovery + the free assessment report (the hook). L2 = continuous posture (the recurring SaaS). L3 = high-assurance / confidential-computing / sovereign (the premium moat).
 
 **CC-mode verification is deliberately split across tiers (do not collapse it into L2).** Full CC-mode attestation (verifying the cryptographic quote, PCIe/NVLink isolation, SPDM sessions) needs privileged access to `/dev/nvidia-caps/*`, SPDM, and sometimes DOCA — that is L3-grade privilege. Dragging it into L2 would break the "L2 is low-friction and read-only" guarantee (P10). Therefore:
@@ -428,17 +430,58 @@ The engine behind moat #2. Normalizes per-vendor evidence into one model.
 ## 10. Trust Report / Verifiable Credential (moat #2 delivery)
 
 ### 10.0 Posture Grading Matrix (governs credential issuance)
-A deterministic posture score (0–100) maps to a grade, and the grade governs whether a credential is issuable. This is the link between findings and the trust badge.
 
-| Grade | Score | Definition | Credential status |
+> **Supersedes the single-grade matrix (superseded 2026-10-31 — see §18).** A grade is now always
+> **scoped to the tier that produced it.** There is no aggregate letter, because one letter cannot
+> mean "your ports are clean" and "your hardware is attested" without misleading whoever reads it
+> fastest — and whoever reads it fastest is the buyer's security reviewer, which is the whole
+> audience for the badge.
+
+**Every grade is reported as `<tier>: <grade>`, never as a bare letter.** A tier can only grade
+what it assesses, so each tier has a ceiling it cannot exceed:
+
+| Tier | What it assesses | Ceiling | Floor |
 | :-- | :-- | :-- | :-- |
-| **A+** | 95–100 | Full hardware attestation (CC mode cryptographically verified via L3), isolated IB P_Key, zero exposed management ports, encrypted fabric. | Issuable — Gold |
-| **A** | 85–94 | L2-verified posture, clean orchestrator endpoints, correct K8s network policies, CC mode *claimed* active. | Issuable — Silver |
-| **B** | 70–84 | Non-critical drift (outdated driver, unencrypted local metrics endpoint). | Issuable with warnings |
-| **C** | 50–69 | Multi-tenant isolation risk (e.g. shared P_Key across distinct tenants). | Withheld / non-issuable |
-| **F** | <50 | Active RCE exposed (e.g. Ray CVE-2023-48022 / CVE-2025-62593 on a public IP). | Revoked + immediate alert |
+| **L1** | Network and AI-service exposure: reachable services, authentication, transport posture | **A** | F |
+| **L2** | + GPU/Kubernetes configuration hygiene, driver/firmware state, CC mode *claimed* | **A** | F |
+| **L3** | + cryptographically verified hardware attestation, fabric isolation, cross-tenant reachability | **A+** | F |
 
-A credential is only ever issued off **verified** closures (§8) — a fix a customer self-reports but that fails its `verification_condition` does not raise the grade.
+L1 and L2 share a ceiling on purpose. The tier label carries the difference — "A at L1" and "A at
+L2" are different claims about different evidence — and inventing a lower ceiling for L1 would
+imply something is wrong when nothing is.
+
+**Within a tier**, the band is driven by the **worst single finding**. One critical exposure is one
+way in, and clean ports elsewhere do not offset it:
+
+| Grade | Score | Within-tier meaning |
+| :-- | :-- | :-- |
+| **A+** | 95–100 | L3 only. Attestation cryptographically verified, isolation evidenced |
+| **A** | 85–94 | No finding above informational at this tier. `94` = nothing found; `90` = low/info only |
+| **B** | 70–84 | Non-critical drift (outdated driver, unencrypted local metrics endpoint) |
+| **C** | 50–69 | Isolation or auth risk at this tier (e.g. a shared P_Key across distinct tenants) |
+| **F** | <50 | Reachable critical exposure (e.g. an unauthenticated Ray Jobs API) |
+| **N/A** | — | **Not a grade.** Nothing responded, or the run was interrupted or degraded. Coverage, not posture — and never a pass |
+
+**Credential issuance is a function of which tiers were assessed, not of one number:**
+
+| Assessed | Credential |
+| :-- | :-- |
+| L1 only | **Assessment report only — no credential.** An agentless scan is a neutral *assessment*, not a *certificate* (`docs/assessment/objections.md` says this to buyers already; do not blur it) |
+| L1 + L2, both ≥ B | Issuable — **Silver**, naming the tiers assessed and the tiers not assessed |
+| L1 + L2 + L3, all ≥ A | Issuable — **Gold** |
+| Any assessed tier at C | Withheld / non-issuable |
+| Any assessed tier at F | Revoked + immediate alert |
+| Any assessed tier `N/A` | Not issuable — we did not look, which is not the same as nothing being there |
+
+The badge and the credential JSON **name the tiers that were assessed and the tiers that were
+not.** A reviewer must be able to tell what was verified without asking us.
+
+A credential is only ever issued off **verified** closures (§8) — a fix a customer self-reports but
+that fails its `verification_condition` does not raise the grade.
+
+**Enforced in code, not just written here.** `ray-guard` emits `tier: "L1"` alongside the grade,
+`domain.L1GradeCeiling` caps it at A, and `TestL1CannotEarnAPlus` sweeps every severity combination
+across completed, interrupted, degraded and unreached runs to prove nothing reaches A+.
 
 ### 10.1 The credential itself
 The commercial artifact. Not a PDF — a **signed, tamper-evident, cross-vendor, compliance-mapped credential**.
@@ -715,6 +758,7 @@ Import-boundary linting enforces Section 5.4. Protobuf changes require a compati
 | 2026-10-31 | `RG-RAY-001` identifies the dashboard by an unauthenticated 2xx on **`/api/version`**, not on `/`; the report states what was observed separately from what it means; and the "this is remote code execution" sentence is keyed to a named set of rules (`codeExecutionRules`) rather than to the severity | External review flagged that we assert RCE from an HTTP 200, which was fair: `/` on 8265 returns the dashboard's HTML shell, **the least discriminating path in the probe table** - any web server answers it - while the claim in the report is about the Jobs API. Two things were then measured against real Ray 2.9.0 rather than argued. **First, the obvious fix is the wrong one.** `GET /api/jobs/` is the read-only sibling of the code-execution endpoint and would be direct evidence, but it returns each job's `entrypoint` - the customer's literal command line (measured: `"entrypoint": "echo probe-evidence-test"`) - plus `runtime_env`, which can carry environment variables. That is the most payload-adjacent document on the host, and requesting it only to discard it is not a trade worth making for a conclusion `/api/version` already supports (P3). It is also why `job` is a forbidden substring in the benign-path allowlist, so taking that path would have meant weakening a deliberate guard to let our own change through. **Second, the change fixes a false positive, not just the wording.** A plain web server on 8265 answers 200 on `/` and 404 on the wildcard control, so the control does not catch it: measured, it was reported as **critical RG-RAY-001, grade F**, and is now **Info RG-EXPOSURE-001, grade A** ("no probe identified the service (HTTP 404)"). A false Critical on the flagship rule is the most expensive error this tool can make in a room. `/api/version` also returns `ray_version`, which is what the CVE honesty needs: the report now says the version was **not determined** and marks the version-specific `CVE-2025-62593` as applicable-if-vulnerable, while `CVE-2023-48022` stands as before because it has no fixed version to upgrade to. The ceiling, stated: a Ray too old to serve `/api/version` is reported as an unidentified service on 8265 at Info rather than as this Critical - visible, not silent. `TestRealRayDashboardIsDetected` is now the upstream guard for that endpoint continuing to exist. | the `/` probe path for `RG-RAY-001`; the RCE sentence keyed to severity; the CVE pair asserted without version evidence |
 | 2026-10-31 | `docs/open-work.md` is the live backlog for continuing work across sessions, pointed to from the Status line and §0, and **explicitly subordinate** to §2 and §18 | Three things kept being re-derived at the start of a session: which items are open, which are blocked on a decision rather than on effort, and - the expensive one - which asks were *already satisfied*. The last matters most: an external review of `CLAUDE.md` plus one `report.json` asked for 13 things that already existed, because those two artifacts are not the system. Without a written list, the default response to outside feedback is to rebuild working code. The file also carries what must **not** be built before the §14 gate, with the reasoning, because the pressure to drift there arrives as a plausible roadmap rather than as a bad idea. Subordination is stated in the file itself so it cannot become a second, softer place to record a decision - which would defeat §18's append-only history. | — |
 | 2026-10-31 | **Four** rule titles stop claiming internet exposure - `RG-TRITON-002`, `RG-TORCHSERVE-002`, `RG-DCGM-001` and `RG-BUCKET-001` now say "reachable without authentication" / "lists without authentication" - the report prints the grade matrix it scores against, and §3 stops calling L1 "passive" | All three came from external review of a `report.json`, and the first is the one that mattered: the reviewed scan covered `172.31.77.0/24`, so "publicly reachable" was **factually wrong on every host in it**, in the single most-read string in the report. The scanner learns reachability from one vantage and cannot learn internet exposure - which this project already knew well enough to record `ScannedFrom` for, so the titles were contradicting our own design. `RG-BUCKET-001` was not named by the review and had the same defect: a MinIO on a private network listed "publicly" too. "Internet-exposed" is now reserved for something independently verified, which L1 never does, and the reason sits in `detect.go` above the rule table so it survives the next person who wants a punchier title. Verified by mutation: drifting one Rego title fails `TestGoAndRegoRuleSetsAgree`. The grade matrix is published because a score a buyer cannot reconstruct is a number they must take on faith, from a vendor selling verifiability; it states first-match-wins order and the asymmetry that matters - an observed finding stands even on an unfinished scan, while an unfinished scan can never earn a clean grade. Deliberately **not** adopted from the review: exploitability, asset criticality and business impact as scoring inputs, because every one of them needs data L1 does not have, and inventing them would be worse than a simple matrix stated plainly. The matrix is HTML-only - it is static documentation, not data about a particular scan, so it is not duplicated into every JSON. | "publicly reachable" in four rule titles; §3's "Passive API/network/endpoint probe" |
+| 2026-10-31 | **Grades are tier-scoped.** §10.0 no longer defines an aggregate grade: each tier carries a ceiling it cannot exceed (L1 → **A**, L2 → **A**, L3 → **A+**), every grade is reported as `<tier>: <grade>`, and credential issuance is a function of *which tiers were assessed* rather than of one number - **L1 alone yields an assessment report and no credential**. In the scanner: a clean L1 run now grades **94/A**, not 100/A+; `tier: "L1"` is emitted beside the grade; and the clean-grade sentence states the ceiling where the grade is, not in a footnote | Owner's decision, taken on the recommendation after external review found the contradiction. §10.0 defined **A+ as "full hardware attestation (CC mode cryptographically verified via L3) ... Issuable - Gold"**, and the shipped agentless scanner printed A+ for any clean scan. Today that is scoped by a footer under a 3rem letter; the moment the Phase-1 credential is issued off the grade, the same code path signs a Gold attestation for hardware nobody examined. That is the dark-host closure hazard one layer up (2026-10-31): there, "we could not look" would have become "we attest it is fixed"; here, "we did not look inside the host" becomes "its hardware is attested" - and a Gold badge derived from a port scan is indistinguishable from an attack on our own trust model. **Rejected: one grade plus a coverage qualifier**, which is precisely what existed and what got flagged - prose beside a large letter loses to the letter. **Rejected: inventing an "L1 A+"**, because A+ has a published meaning and a second meaning for a symbol buyers compare across reports is worse than a lower ceiling. L1 and L2 deliberately share the A ceiling: the tier label carries the difference, and a lower L1 ceiling would imply something is wrong when nothing is. The 94 is the top of the A band, so it is the best grade available at this tier rather than a penalty - and losing "100/100" is a gain, since 100/100 from a port scan invites "really?" and the honest answer is no. Enforced rather than documented: `TestL1CannotEarnAPlus` sweeps all 32 severity combinations across completed, interrupted, degraded and unreached runs; verified by mutation (restoring the A+ return fails it). `gradeClass("A+")` keeps its own test because A+ still exists for the attested tiers and `+` is not CSS-safe. `docs/data-model.md`'s single `current_grade` column is marked superseded - it needs one grade per assessed tier before Phase 1 ships. | §10.0's single-grade matrix; `A+`/100 as a reachable L1 result |
 > When you change any of the above, **add a new dated row** and set "Supersedes." Never edit history.
 
 ---

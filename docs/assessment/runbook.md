@@ -170,7 +170,7 @@ something that does not count:
 
 - **They were not really in the room.** Screensharing to someone answering
   email is not a buyer-led assessment.
-- **You found nothing.** A clean A+ result is a fine outcome for them and a
+- **You found nothing.** A clean `A` result (the Level 1 ceiling) is a fine outcome for them and a
   weak conversation for you. Ask anyway: "if this had found an exposed Ray
   dashboard, would you have paid to know?" Log the answer as what it is —
   hypothetical.

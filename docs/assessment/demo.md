@@ -188,7 +188,7 @@ with [`authorization.md`](authorization.md) — not with a scan.
 - **`N/A — INCONCLUSIVE`, nothing responded** — the stack is gone. Most
   likely you ran `make test-integration` after `make demo-up`: it brings the
   same stack up and tears it down again on exit. Re-run `make demo-up`.
-  (Worth noting that the tool said "inconclusive" rather than "A+" here —
+  (Worth noting that the tool said "inconclusive" rather than a clean grade here —
   that is the behaviour the report footer is describing.)
 - **Asked something you can't answer** — say so and write it down. "I don't
   know, I'll find out" costs nothing here; a confident wrong answer to a

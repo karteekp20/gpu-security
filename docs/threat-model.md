@@ -195,7 +195,7 @@ pipeline scans a moved target would pass green indefinitely.
   (`report.json` carries them all). The cap exists so a dark /24 cannot bury
   the report it is supposed to qualify.
 - An **interrupted** scan (Ctrl-C) is the same failure in a different shape, so
-  it gets the same treatment: `A`/`A+` are unreachable by construction, the
+  it gets the same treatment: a clean grade is unreachable by construction, the
   report leads with "this report is partial" and states how many of the
   requested targets were probed, and the process exits **130**. A
   finding-driven grade still stands — an observed exposure is observed — but it

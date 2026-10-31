@@ -140,8 +140,39 @@ type Finding struct {
 // to grade. It is deliberately not a passing grade.
 const GradeInconclusive Grade = "N/A"
 
+// GradeAPlus is defined but is NOT reachable from this scanner, and that is the
+// point. CLAUDE.md 10.0 reserves A+ for a tier that cryptographically verifies
+// hardware attestation and fabric isolation (L3). An agentless port-and-TLS
+// scan cannot look at either, so a clean L1 run that printed A+ would be
+// claiming a grade whose published meaning is "hardware attested" - and once
+// the Phase-1 credential is issued off the grade, that same path would sign
+// "Issuable - Gold" for hardware nobody examined.
+//
+// L1GradeCeiling is therefore what a clean L1 scan earns: the top of the A
+// band, not a penalty. It is the highest grade available at this tier, and
+// TestL1CannotEarnAPlus enforces that nothing reaches past it.
+const (
+	GradeAPlus     Grade = "A+"
+	L1GradeCeiling Grade = "A"
+)
+
+// TierL1 names what this scanner assesses, and it travels in the report so a
+// grade is never read without its scope. A grade means nothing on its own: "A
+// at L1" and "A at L2" are different claims about different evidence, and a
+// bare letter invites the reader to assume the stronger one.
+const TierL1 = "L1"
+
+// L1CleanScore is the score for an L1 scan with no findings: the top of
+// CLAUDE.md 10.0's A band (85-94), not 100. 95-100 is the A+ band and belongs
+// to the attested tiers.
+const L1CleanScore = 94
+
 type ScanResult struct {
 	ScannerVersion string `json:"scanner_version"`
+	// Tier is the assessment tier this result covers, always TierL1 from this
+	// binary. It is emitted so no consumer - a report reader, the Phase-1
+	// control plane, or a credential - can take the grade without its scope.
+	Tier string `json:"tier"`
 	// Label is free text the operator supplies with -label: which engagement
 	// this report belongs to. It is the one field here most likely to name a
 	// customer, so it must never reach the anonymized benchmark snapshot (P9).
@@ -241,6 +272,7 @@ func NewResult(run Run) ScanResult {
 
 	r := ScanResult{
 		ScannerVersion: Version,
+		Tier:           TierL1,
 		StartedAt:      start, CompletedAt: end,
 		TargetsRequested:  requested,
 		TargetsScanned:    len(hosts),
@@ -288,9 +320,11 @@ func gradeFor(s map[Severity]int, responded int, complete bool) (int, Grade) {
 	case responded == 0 || !complete:
 		return 0, GradeInconclusive
 	case s[Low] > 0 || s[Info] > 0:
-		return 90, "A"
+		return 90, L1GradeCeiling
 	default:
-		return 100, "A+"
+		// NOT A+. See GradeAPlus: that grade's published meaning is attested
+		// hardware, which this tier does not assess.
+		return L1CleanScore, L1GradeCeiling
 	}
 }
 
@@ -330,14 +364,21 @@ func gradeReason(g Grade, findings []Finding, r ScanResult) string {
 		return "No result: no target responded, so nothing was verified. " +
 			"The hosts may be firewalled, powered off, or unreachable from here - " +
 			"this is not a clean result."
-	case "A+":
-		s := "No exposure was observed on the scanned targets."
-		if r.PartialCoverage() {
-			s += " Note that some targets did not respond and were not assessed."
+	case L1GradeCeiling:
+		var s string
+		if len(findings) == 0 {
+			s = "No exposure was observed on the scanned targets."
+			if r.PartialCoverage() {
+				s += " Note that some targets did not respond and were not assessed."
+			}
+		} else {
+			s = "Only low-severity or informational exposure was observed."
 		}
-		return s
-	case "A":
-		return "Only low-severity or informational exposure was observed."
+		// Stated with the grade rather than in a footnote, because the grade is
+		// what gets quoted and the ceiling is what makes it honest.
+		return s + " A is the highest grade a Level 1 assessment can earn: A+ " +
+			"requires cryptographic hardware attestation and fabric-isolation " +
+			"evidence, which this assessment does not collect."
 	}
 	worst := WorstFinding(findings)
 	if worst == nil {

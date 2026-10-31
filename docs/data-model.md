@@ -126,7 +126,7 @@
 | deployment_type | text CHECK IN (bare_metal, k8s, hybrid) | |
 | fabric_type | text CHECK IN (infiniband, roce_v2, ethernet, mixed, unknown) DEFAULT 'unknown' | |
 | enrolment_status | text CHECK IN (pending, active, disabled) DEFAULT 'pending' | |
-| current_grade | text NULL | A+/A/B/C/F (CLAUDE.md §10.0); NULL until first scan |
+| current_grade | text NULL | A+/A/B/C/F (CLAUDE.md §10.0); NULL until first scan. **Tier-scoped as of 2026-10-31:** §10.0 no longer defines an aggregate grade, so this column is superseded by one grade per assessed tier (L1/L2/L3) before Phase 1 ships. A+ is reachable only at L3 |
 | current_score | int NULL | 0–100 |
 | last_scan_at | timestamptz | |
 | created_at / updated_at | timestamptz | |
@@ -311,7 +311,7 @@
 | id | uuid PK | |
 | tenant_id | uuid FK NOT NULL | |
 | cluster_id | uuid FK NOT NULL | |
-| grade | text | A+/A/B/C/F |
+| grade | text | A+/A/B/C/F, scoped to the tier that produced it (§10.0); A+ only at L3 |
 | score | int | |
 | canonical_hash | text | hash of the W3C VC JSON |
 | signature_ref | uuid FK→evidence_index | detached hybrid signature blob |

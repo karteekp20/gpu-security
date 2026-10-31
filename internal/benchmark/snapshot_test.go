@@ -133,8 +133,8 @@ func TestEmptyScanProducesCleanSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
-	if snap.Grade != "A+" || len(snap.Findings) != 0 {
-		t.Errorf("a clean scan should snapshot as A+ with no records, got %+v", snap)
+	if snap.Grade != domain.L1GradeCeiling || len(snap.Findings) != 0 {
+		t.Errorf("a clean scan should snapshot as the L1 ceiling with no records, got %+v", snap)
 	}
 }
 
