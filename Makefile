@@ -47,8 +47,9 @@ fuzz:
 
 ## test-policies: the Rego rule library (CLAUDE.md 8). Needs opa on PATH.
 ## The structural checks - both sentinel halves, metadata, a test per rule, no
-## drift from detect.go - are in `make test`, so they run without opa; this is
-## the semantic half.
+## drift from detect.go, and the state vocabulary pinned to internal/domain's
+## enums - are in `make test`, so they run without opa; this is the semantic
+## half, including the differential over both corpora (findings and closures).
 test-policies:
 	@command -v opa >/dev/null 2>&1 \
 		|| { echo "opa not installed: https://www.openpolicyagent.org/docs/latest/#running-opa"; exit 1; }

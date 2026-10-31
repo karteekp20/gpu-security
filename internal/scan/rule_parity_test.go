@@ -1,6 +1,7 @@
 package scan
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -347,5 +348,130 @@ func TestAggregateWalksEveryPolicyDomain(t *testing.T) {
 				"data.gpusecurity.%s - every evaluation would silently skip them",
 				e.Name(), e.Name())
 		}
+	}
+}
+
+// stateComparisonRe matches a comparison between one of the scanner's state
+// fields and a string literal, in either the `obs.` (library) or `input.`
+// (rule) spelling, and with `==`, `!=` or `in {...}`.
+var stateComparisonRe = regexp.MustCompile(
+	`(?:obs|input)\.(host_state|state|tls\.version)\s*(?:==|!=|in)\s*(\{[^}]*\}|"[^"]*")`)
+
+// hostReachedRe isolates the one comparison the signed credential rests on.
+var hostReachedRe = regexp.MustCompile(
+	`host_reached\(obs\)\s+if\s+obs\.host_state\s*==\s*"([^"]*)"`)
+
+// TestRegoStateVocabularyMatchesTheScanner pins the strings the rule library
+// compares against to the strings the scanner actually emits.
+//
+// This exists because of a measured hole, not a hypothetical one. Renaming
+// domain.HostResponded's value from "responded" to anything else left the
+// whole Go suite green, regenerated the finding corpus cleanly, and - before
+// the closure corpus existed - kept the Rego differential at 26/26, because no
+// finding_condition reads host_state. Only closures do. Every one of the 19
+// verification sentinels would have become permanently unsatisfiable: no
+// finding would ever auto-close, the credential's verified-closure machinery
+// would be dead, and every gate would have reported healthy.
+//
+// test/policy-corpus/closures.json now catches that in CI. This catches it
+// locally, with no OPA installed, which is where it should be caught.
+func TestRegoStateVocabularyMatchesTheScanner(t *testing.T) {
+	vocab := map[string]map[string]bool{
+		"host_state": {
+			string(domain.HostResponded):   true,
+			string(domain.HostNoResponse):  true,
+			string(domain.HostUnresolved):  true,
+			string(domain.HostProbeFailed): true,
+		},
+		"state": {
+			string(domain.PortOpen):     true,
+			string(domain.PortClosed):   true,
+			string(domain.PortFiltered): true,
+		},
+		"tls.version": {},
+	}
+	// The TLS versions the scanner can report, from the function that reports
+	// them. "" is excluded deliberately: an unknown future version is recorded
+	// as empty rather than guessed at, and no rule may treat that as modern.
+	for _, v := range []uint16{
+		tls.VersionTLS10, tls.VersionTLS11, tls.VersionTLS12, tls.VersionTLS13,
+	} {
+		vocab["tls.version"][tlsVersionName(v)] = true
+	}
+
+	paths := append(regoRuleFiles(t), filepath.Join(policiesDir, "lib", "evidence.rego"))
+	var checked int
+	for _, path := range paths {
+		b, err := os.ReadFile(path) // #nosec G304 -- fixed test-local paths
+		if err != nil {
+			t.Fatalf("reading %s: %v", path, err)
+		}
+		for _, m := range stateComparisonRe.FindAllStringSubmatch(string(b), -1) {
+			field, operand := m[1], m[2]
+			for _, lit := range quoted.FindAllStringSubmatch(operand, -1) {
+				checked++
+				if !vocab[field][lit[1]] {
+					t.Errorf("%s compares %s against %q, which the scanner never emits. "+
+						"Either the rule is dead code or an enum in internal/domain was "+
+						"renamed without the rules following; both make the rule silently "+
+						"unsatisfiable.", filepath.Base(path), field, lit[1])
+				}
+			}
+		}
+	}
+	if checked == 0 {
+		t.Fatal("matched no state comparisons at all; the regex has drifted from the " +
+			"rule library's spelling and this test is no longer checking anything")
+	}
+
+	// And the load-bearing one, by name: the precondition every closure chains
+	// to must be the state the scanner uses for "this host answered".
+	ev, err := os.ReadFile(filepath.Join(policiesDir, "lib", "evidence.rego")) // #nosec G304 -- fixed test-local paths
+	if err != nil {
+		t.Fatalf("reading evidence.rego: %v", err)
+	}
+	m := hostReachedRe.FindStringSubmatch(string(ev))
+	if m == nil {
+		t.Fatal("lib/evidence.rego no longer defines host_reached as a comparison " +
+			"against obs.host_state; every verification sentinel chains to it, so a " +
+			"change here changes what the signed credential means")
+	}
+	if m[1] != string(domain.HostResponded) {
+		t.Errorf("host_reached requires host_state == %q but the scanner reports %q "+
+			"for a host that answered; no finding could ever auto-close",
+			m[1], domain.HostResponded)
+	}
+}
+
+// TestPolicyBundleShipsNoDataFiles keeps test fixtures out of the policy
+// bundle.
+//
+// OPA loads every .json/.yaml it finds under a bundle path into the data
+// document, mounted at a path derived from the directory. So the differential
+// corpus sitting in policies/testdata/ was silently becoming part of the
+// evaluated policy data - harmless while the aggregate only walks
+// data.gpusecurity, but /policies is also what ships as the signed air-gap
+// update bundle (CLAUDE.md §13), which means a fixture would have been
+// delivered to a customer as policy data. Adding a second corpus turned the
+// quiet version into a hard failure (`conflicting values at
+// data.testdata._comment`), which is how it was found.
+func TestPolicyBundleShipsNoDataFiles(t *testing.T) {
+	err := filepath.Walk(policiesDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			return nil
+		}
+		switch strings.ToLower(filepath.Ext(path)) {
+		case ".json", ".yaml", ".yml":
+			t.Errorf("%s is inside the policy bundle, so OPA loads it into the data "+
+				"document and the air-gap bundle (§13) would ship it to a customer as "+
+				"policy data. Test fixtures belong under /test.", path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walking %s: %v", policiesDir, err)
 	}
 }

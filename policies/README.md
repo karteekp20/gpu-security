@@ -62,7 +62,7 @@ from. The field names are `internal/domain.Observation`'s JSON tags plus
 | `state` | `open` `closed` `filtered` | `closed` is a TCP RST (the host answered); `filtered` is silence |
 | `http_status` | `0` or an HTTP code | `0` means no HTTP response to reason about |
 | `unauth` | bool | The service answered 2xx without asking for credentials |
-| `tls.issue` | `""` `self-signed` `expired` `not-yet-valid` `hostname-mismatch` | Failure class only — never subject, issuer, serial or chain bytes (P3) |
+| `tls.issue` | `""` `self-signed` `expired` `not-yet-valid` `hostname-mismatch` `untrusted` | Failure class only — never subject, issuer, serial or chain bytes (P3). `untrusted` is the scanner's fallback for a verification error outside the four named classes; rules test `issue != ""`, so it fires and never closes |
 | `host_state` | `responded` `no-response` `unresolved` `probe-failed` | **Only `responded` permits a closure** |
 
 Nothing in this contract can carry customer payload. That is enforced on the
@@ -93,26 +93,53 @@ unauthenticated request was refused" is true of it and completely irrelevant.
 ```bash
 make test            # structural: both halves present, metadata parses, a
                      # test per rule, a dark-host case per rule, no drift
-                     # from detect.go, corpus current. No opa needed.
+                     # from detect.go, state vocabulary pinned to the
+                     # scanner's enums, both corpora current. No opa needed.
 make test-policies   # semantic: opa check --strict, opa test, and the
-                     # differential against the Go detector. Needs opa.
+                     # differential over both corpora. Needs opa.
 ```
 
 Three gates, and they check different things:
 
 | Gate | Proves | Where |
 | :-- | :-- | :-- |
-| `rule_parity_test.go` | the two sides agree on IDs, severities, remediation text, CVEs; every rule has both halves and a test | Go suite |
-| `opa test` | the rules mean what their own tests say (106 assertions) | `policy` job |
-| `differential.py` | the rules fire on exactly what the **shipping scanner** fires on | `policy` job |
+| `rule_parity_test.go` | the two sides agree on IDs, severities, remediation text, CVEs; every rule has both halves and a test; every state string the rules compare against is one the scanner emits | Go suite |
+| `opa test` | the rules mean what their own tests say | `policy` job |
+| `differential.py` → `corpus.json` | the rules **fire** on exactly what the shipping scanner fires on | `policy` job |
+| `differential.py` → `closures.json` | every sentinel **closes** only on evidence, and closes when the evidence is there | `policy` job |
 
-The third is the one that is easy to skip and expensive to omit: metadata
-parity with divergent behaviour is the worst of both worlds, a report and a
-credential citing the same rule ID while disagreeing about whether it fired.
-The corpus (`testdata/corpus.json`) is generated from the Go detector, because
-that is the side with real traffic behind it, and `make test` fails if it goes
-stale. A new rule with no firing case in the corpus also fails — so a rule
-cannot be added without being compared.
+The differential is the gate that is easy to skip and expensive to omit:
+metadata parity with divergent behaviour is the worst of both worlds, a report
+and a credential citing the same rule ID while disagreeing about whether it
+fired. It runs over two corpora, one per half of every sentinel.
+
+`test/policy-corpus/corpus.json` — the **finding** half. Generated from the Go detector,
+because that is the side with real traffic behind it. `make test` fails if it
+goes stale, and a new rule with no firing case also fails, so a rule cannot be
+added without being compared.
+
+`test/policy-corpus/closures.json` — the **closure** half. Go has no closure
+implementation to compare against (closures exist only here, and only the
+control plane evaluates them), so its expectations come from two places that
+are not the rules themselves: the state *vocabulary* is generated from
+`internal/domain`, and the *scope* is each rule's own declared service. Its
+negative cases need no per-rule knowledge at all, which is why they are the
+stronger half — on a host the scan never reached, **nothing** may close,
+whatever else the observation says.
+
+That corpus exists because of a measured hole. Renaming
+`domain.HostResponded`'s value left the entire Go suite green, regenerated
+`corpus.json` cleanly, and kept the finding differential at 26/26 — no
+`finding_condition` reads `host_state`, only closures do. All 19 sentinels
+would have become permanently unsatisfiable: no finding would ever auto-close,
+and every gate would have reported healthy.
+
+Both corpora live under `/test`, not in here. OPA loads every `.json` it finds
+in a bundle into the data document, and this directory is what ships as the
+signed air-gap bundle (§13) — a test fixture in `policies/testdata/` was
+quietly becoming part of the evaluated policy data, and two of them in one
+directory collide outright, which is how it was noticed.
+`TestPolicyBundleShipsNoDataFiles` keeps it that way.
 
 ## Why the rules exist twice
 
