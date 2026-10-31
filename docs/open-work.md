@@ -159,11 +159,19 @@ These are habits that found real defects, not ceremony:
 
 ## 7. Housekeeping, when someone wants it
 
-- Merged branches not yet deleted: `rego_rule`, `rego_rule_differential`,
-  `rego_rule_closures`, `ray_evidence_path`, `report_claims`, `tier_grades`,
-  `release_v0.2.0`. `Demo_V1` is a deliberate snapshot — keep.
-- A `v0.1.0` **draft** release from 2026-09-26 was never published and is
-  superseded by `v0.1.1`.
+- ~~Merged branches not yet deleted~~ — done 2026-10-31: all nine merged
+  branches deleted locally and on the remote (`rego_rule`,
+  `rego_rule_differential`, `rego_rule_closures`, `ray_evidence_path`,
+  `report_claims`, `tier_grades`, `release_v0.2.0`, `v020_preflight`,
+  `pinned_resolution`). `Demo_V1` is a deliberate snapshot and was kept; it and
+  `main` are the only branches left.
+- ~~A `v0.1.0` **draft** release~~ — deleted 2026-10-31. It was never published,
+  was superseded by `v0.1.1`, and its 18 assets were signed in the **old
+  detached `.sig`/`.pem` format**, which a current cosign cannot verify at all
+  (see the 2026-10-31 bundle-format row in §18) — so publishing it by accident
+  would have shipped artifacts with unverifiable signatures. The `v0.1.0` **tag**
+  is still pushed and was deliberately left alone: a tag is a point in history,
+  and `docs/publishing.md` says not to touch released tags.
 - `.claude/settings.local.json` still pre-approves the repo visibility flip,
   which has nothing left to use it for.
 - **Open verification gap needing a human:** whether a buyer on cosign 2.x can
