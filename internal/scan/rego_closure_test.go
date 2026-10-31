@@ -16,7 +16,7 @@ import (
 // The closure corpus: the differential test for the OTHER half of every
 // sentinel.
 //
-// policies/testdata/corpus.json compares what the two implementations FIND.
+// test/policy-corpus/corpus.json compares what the two implementations FIND.
 // Nothing compared what they CLOSE, and that asymmetry had a measurable
 // consequence: renaming domain.HostResponded's value from "responded" to
 // anything else left the entire Go suite green, regenerated the finding corpus
@@ -42,7 +42,7 @@ import (
 //     close, whatever else the observation says. That is the property the
 //     signed credential rests on (CLAUDE.md §8, and the 2026-09-25 decision
 //     that a scan reaching nothing may not grade clean).
-const closuresPath = "../../policies/testdata/closures.json"
+const closuresPath = "../../test/policy-corpus/closures.json"
 
 // serviceBindingRe matches the `input.service == "x"` a verification clause
 // uses to scope itself. Scoping is not cosmetic: before it, a Ray observation

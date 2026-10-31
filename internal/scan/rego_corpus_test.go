@@ -23,7 +23,13 @@ import (
 // ships and that customers' reports come from - and CI replays it through OPA
 // (policies/tools/differential.py). The Go side is the reference because it is
 // the side with real traffic behind it.
-const corpusPath = "../../policies/testdata/corpus.json"
+//
+// The corpora live under /test rather than inside /policies on purpose: OPA
+// loads every .json it finds in a bundle into the data document, so a fixture
+// in policies/testdata/ became part of the evaluated policy data - and /policies
+// is what ships as the signed air-gap bundle (CLAUDE.md §13). Two of them in one
+// directory also collide outright, which is how this was found.
+const corpusPath = "../../test/policy-corpus/corpus.json"
 
 // corpusCase is one observation plus the rule IDs the shipping scanner raises
 // for it. `input` is what a Rego rule sees, which is the observation joined

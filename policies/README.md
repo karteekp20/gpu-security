@@ -113,12 +113,12 @@ metadata parity with divergent behaviour is the worst of both worlds, a report
 and a credential citing the same rule ID while disagreeing about whether it
 fired. It runs over two corpora, one per half of every sentinel.
 
-`testdata/corpus.json` — the **finding** half. Generated from the Go detector,
+`test/policy-corpus/corpus.json` — the **finding** half. Generated from the Go detector,
 because that is the side with real traffic behind it. `make test` fails if it
 goes stale, and a new rule with no firing case also fails, so a rule cannot be
 added without being compared.
 
-`testdata/closures.json` — the **closure** half. Go has no closure
+`test/policy-corpus/closures.json` — the **closure** half. Go has no closure
 implementation to compare against (closures exist only here, and only the
 control plane evaluates them), so its expectations come from two places that
 are not the rules themselves: the state *vocabulary* is generated from
@@ -133,6 +133,13 @@ That corpus exists because of a measured hole. Renaming
 `finding_condition` reads `host_state`, only closures do. All 19 sentinels
 would have become permanently unsatisfiable: no finding would ever auto-close,
 and every gate would have reported healthy.
+
+Both corpora live under `/test`, not in here. OPA loads every `.json` it finds
+in a bundle into the data document, and this directory is what ships as the
+signed air-gap bundle (§13) — a test fixture in `policies/testdata/` was
+quietly becoming part of the evaluated policy data, and two of them in one
+directory collide outright, which is how it was noticed.
+`TestPolicyBundleShipsNoDataFiles` keeps it that way.
 
 ## Why the rules exist twice
 

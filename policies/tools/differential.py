@@ -16,10 +16,10 @@ credential citing the same rule ID while disagreeing about whether it fired.
 
 Two corpora close that gap, one per half of every sentinel.
 
-`corpus.json` - what the rules FIND. Generated from the Go detector, the side
+`test/policy-corpus/corpus.json` - what the rules FIND. Generated from the Go detector, the side
 with real traffic behind it, and replayed through `aggregate.findings`.
 
-`closures.json` - what the rules CLOSE. Generated from the scanner's own state
+`test/policy-corpus/closures.json` - what the rules CLOSE. Generated from the scanner's own state
 vocabulary (`internal/domain`) plus each rule's declared scope, and replayed
 through `aggregate.verified`. It exists because the finding half cannot see
 closure drift at all: no `finding_condition` reads `host_state`, so renaming
@@ -49,8 +49,11 @@ import tempfile
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
 POLICIES = REPO / "policies"
-CORPUS = POLICIES / "testdata" / "corpus.json"
-CLOSURES = POLICIES / "testdata" / "closures.json"
+# The corpora live outside /policies deliberately: OPA loads every .json in a
+# bundle into the data document, and /policies is what ships as the signed
+# air-gap bundle (CLAUDE.md §13). A fixture there is customer policy data.
+CORPUS = REPO / "test" / "policy-corpus" / "corpus.json"
+CLOSURES = REPO / "test" / "policy-corpus" / "closures.json"
 REGENERATE = (
     "RAY_GUARD_UPDATE_CORPUS=1 go test ./internal/scan "
     "-run 'TestRegoCorpusIsCurrent|TestRegoClosureCorpusIsCurrent'"

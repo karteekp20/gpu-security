@@ -373,7 +373,7 @@ var hostReachedRe = regexp.MustCompile(
 // finding would ever auto-close, the credential's verified-closure machinery
 // would be dead, and every gate would have reported healthy.
 //
-// policies/testdata/closures.json now catches that in CI. This catches it
+// test/policy-corpus/closures.json now catches that in CI. This catches it
 // locally, with no OPA installed, which is where it should be caught.
 func TestRegoStateVocabularyMatchesTheScanner(t *testing.T) {
 	vocab := map[string]map[string]bool{
@@ -440,5 +440,38 @@ func TestRegoStateVocabularyMatchesTheScanner(t *testing.T) {
 		t.Errorf("host_reached requires host_state == %q but the scanner reports %q "+
 			"for a host that answered; no finding could ever auto-close",
 			m[1], domain.HostResponded)
+	}
+}
+
+// TestPolicyBundleShipsNoDataFiles keeps test fixtures out of the policy
+// bundle.
+//
+// OPA loads every .json/.yaml it finds under a bundle path into the data
+// document, mounted at a path derived from the directory. So the differential
+// corpus sitting in policies/testdata/ was silently becoming part of the
+// evaluated policy data - harmless while the aggregate only walks
+// data.gpusecurity, but /policies is also what ships as the signed air-gap
+// update bundle (CLAUDE.md §13), which means a fixture would have been
+// delivered to a customer as policy data. Adding a second corpus turned the
+// quiet version into a hard failure (`conflicting values at
+// data.testdata._comment`), which is how it was found.
+func TestPolicyBundleShipsNoDataFiles(t *testing.T) {
+	err := filepath.Walk(policiesDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			return nil
+		}
+		switch strings.ToLower(filepath.Ext(path)) {
+		case ".json", ".yaml", ".yml":
+			t.Errorf("%s is inside the policy bundle, so OPA loads it into the data "+
+				"document and the air-gap bundle (§13) would ship it to a customer as "+
+				"policy data. Test fixtures belong under /test.", path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walking %s: %v", policiesDir, err)
 	}
 }
