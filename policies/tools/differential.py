@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Replay the scanner's corpus through OPA and compare what fires.
+"""Replay the scanner's corpora through OPA and compare what fires and what closes.
 
 Why
 ---
@@ -14,9 +14,19 @@ severities, remediation text and CVEs. That is *metadata* parity, and metadata
 parity with divergent behaviour is the worst of both worlds: a report and a
 credential citing the same rule ID while disagreeing about whether it fired.
 
-This closes that gap. The corpus is generated from the Go detector - the side
-with real traffic behind it - and every case is pushed through
-`data.gpusecurity.aggregate.findings`. A mismatch in either direction fails.
+Two corpora close that gap, one per half of every sentinel.
+
+`corpus.json` - what the rules FIND. Generated from the Go detector, the side
+with real traffic behind it, and replayed through `aggregate.findings`.
+
+`closures.json` - what the rules CLOSE. Generated from the scanner's own state
+vocabulary (`internal/domain`) plus each rule's declared scope, and replayed
+through `aggregate.verified`. It exists because the finding half cannot see
+closure drift at all: no `finding_condition` reads `host_state`, so renaming
+`domain.HostResponded` left every Go gate and the finding differential green
+while making all 19 verification sentinels permanently unsatisfiable. Its
+negative cases are the stronger half - on a host we did not reach, nothing may
+close, whatever else the observation says.
 
 Usage
 -----
@@ -40,14 +50,18 @@ import tempfile
 REPO = pathlib.Path(__file__).resolve().parents[2]
 POLICIES = REPO / "policies"
 CORPUS = POLICIES / "testdata" / "corpus.json"
-QUERY = "data.gpusecurity.aggregate.findings"
+CLOSURES = POLICIES / "testdata" / "closures.json"
+REGENERATE = (
+    "RAY_GUARD_UPDATE_CORPUS=1 go test ./internal/scan "
+    "-run 'TestRegoCorpusIsCurrent|TestRegoClosureCorpusIsCurrent'"
+)
 
 
-def opa_eval(opa: str, input_path: pathlib.Path) -> set[str]:
-    """Return the set of rule IDs that fired for one observation."""
+def opa_eval(opa: str, input_path: pathlib.Path, query: str) -> set[str]:
+    """Return the set of rule IDs `query` yields for one observation."""
     proc = subprocess.run(
         [opa, "eval", "--format", "json",
-         "--data", str(POLICIES), "--input", str(input_path), QUERY],
+         "--data", str(POLICIES), "--input", str(input_path), query],
         capture_output=True, text=True, check=False,
     )
     if proc.returncode != 0:
@@ -55,10 +69,75 @@ def opa_eval(opa: str, input_path: pathlib.Path) -> set[str]:
     doc = json.loads(proc.stdout)
     results = doc.get("result") or []
     if not results:
-        # No result at all means the query was undefined: an empty finding set.
+        # No result at all means the query was undefined: an empty set.
         return set()
     value = results[0]["expressions"][0]["value"]
     return set(value or [])
+
+
+def load(path: pathlib.Path) -> list[dict]:
+    if not path.exists():
+        sys.exit(f"{path} is missing. Generate it with:\n  {REGENERATE}")
+    return json.loads(path.read_text())["cases"]
+
+
+def run_findings(opa: str, tmp: pathlib.Path) -> list[str]:
+    """Compare the rule IDs each implementation raises. Equality, both ways."""
+    failures: list[str] = []
+    cases = load(CORPUS)
+    print(f"findings  ({len(cases)} cases, against the shipping Go detector)")
+    for case in cases:
+        tmp.write_text(json.dumps(case["input"]))
+        got = opa_eval(opa, tmp, "data.gpusecurity.aggregate.findings")
+        want = set(case.get("expect_findings") or [])
+        status = "ok  "
+        if got != want:
+            status = "DIFF"
+            detail = []
+            if want - got:
+                detail.append(
+                    f"the scanner raises {sorted(want - got)} and the rules do not")
+            if got - want:
+                detail.append(
+                    f"the rules raise {sorted(got - want)} and the scanner does not")
+            failures.append(f"{case['name']}: " + "; ".join(detail))
+        print(f"  {status}  {case['name']:<52} {sorted(want) or '[]'}")
+    return failures
+
+
+def run_closures(opa: str, tmp: pathlib.Path) -> list[str]:
+    """Check what the sentinels close.
+
+    Two assertion shapes, on purpose. A positive case is a SUBSET check,
+    because one isolation observation legitimately closes several rules at once
+    (an isolated vLLM port closes RG-VLLM-001 and RG-TLS-002 together). A
+    negative case is an EQUALITY against the empty set, because "nothing closes
+    on a host we did not reach" admits no exceptions.
+    """
+    failures: list[str] = []
+    cases = load(CLOSURES)
+    print(f"closures  ({len(cases)} cases, against the sentinel contract)")
+    for case in cases:
+        tmp.write_text(json.dumps(case["input"]))
+        got = opa_eval(opa, tmp, "data.gpusecurity.aggregate.verified")
+        status = "ok  "
+        if case.get("expect_verified_empty"):
+            shown = "{} required"
+            if got:
+                status = "DIFF"
+                failures.append(
+                    f"{case['name']}: {sorted(got)} closed on a host the scan never "
+                    "reached - absence of evidence was accepted as proof of a fix")
+        else:
+            want = set(case.get("expect_verified_contains") or [])
+            shown = str(sorted(want))
+            if not want <= got:
+                status = "DIFF"
+                failures.append(
+                    f"{case['name']}: {sorted(want - got)} did not close although the "
+                    "remediation was observed, so the finding would stay open forever")
+        print(f"  {status}  {case['name']:<68} {shown}")
+    return failures
 
 
 def main() -> int:
@@ -72,46 +151,28 @@ def main() -> int:
             "or pass --opa /path/to/opa. The structural parity checks run "
             "without it in `make test`."
         )
-    if not CORPUS.exists():
-        sys.exit(
-            f"{CORPUS} is missing. Generate it with:\n"
-            "  RAY_GUARD_UPDATE_CORPUS=1 go test ./internal/scan -run TestRegoCorpus"
-        )
 
-    cases = json.loads(CORPUS.read_text())["cases"]
-    failures: list[str] = []
-    with tempfile.TemporaryDirectory() as tmp:
-        input_path = pathlib.Path(tmp) / "input.json"
-        for case in cases:
-            input_path.write_text(json.dumps(case["input"]))
-            got = opa_eval(args.opa, input_path)
-            want = set(case.get("expect_findings") or [])
-            status = "ok  "
-            if got != want:
-                status = "DIFF"
-                only_go = sorted(want - got)
-                only_rego = sorted(got - want)
-                detail = []
-                if only_go:
-                    detail.append(f"the scanner raises {only_go} and the rules do not")
-                if only_rego:
-                    detail.append(f"the rules raise {only_rego} and the scanner does not")
-                failures.append(f"{case['name']}: " + "; ".join(detail))
-            print(f"  {status}  {case['name']:<52} {sorted(want) or '[]'}")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = pathlib.Path(td) / "input.json"
+        failures = run_findings(args.opa, tmp)
+        print()
+        failures += run_closures(args.opa, tmp)
 
+    total = len(load(CORPUS)) + len(load(CLOSURES))
     print()
     if failures:
-        print(f"{len(failures)} of {len(cases)} cases differ between the two implementations:")
+        print(f"{len(failures)} of {total} cases disagree with the rule library:")
         for f in failures:
             print(f"  - {f}")
         print(
-            "\nThe Go detector is the reference: it ships, and customer reports come\n"
-            "from it. Fix the Rego rule, or - if the Go side is what is wrong - fix\n"
-            "it there and regenerate the corpus."
+            "\nFor a findings difference the Go detector is the reference: it ships,\n"
+            "and customer reports come from it. Fix the Rego rule, or - if the Go\n"
+            "side is what is wrong - fix it there and regenerate the corpus:\n"
+            f"  {REGENERATE}"
         )
         return 1
-    print(f"{len(cases)}/{len(cases)} cases agree: the Go detector and the Rego library "
-          "fire the same rules.")
+    print(f"{total}/{total} cases agree: the two implementations fire the same rules, "
+          "and every sentinel closes only on evidence.")
     return 0
 
 

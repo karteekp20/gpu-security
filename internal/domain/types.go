@@ -47,7 +47,10 @@ const (
 type TLSState struct {
 	Enabled bool `json:"enabled"`
 	// Issue is "" when the certificate verified cleanly. Otherwise one of
-	// "self-signed", "expired", "not-yet-valid", "hostname-mismatch".
+	// "self-signed", "expired", "not-yet-valid", "hostname-mismatch", or
+	// "untrusted" for a verification error outside those four classes. The
+	// list is the Rego input contract (policies/README.md), so a new class
+	// belongs in both places.
 	Issue string `json:"issue,omitempty"`
 	// NotAfter is a date (YYYY-MM-DD), not a timestamp - coarse on purpose.
 	NotAfter string `json:"not_after,omitempty"`

@@ -112,10 +112,15 @@ jobs:
       - name: Rule tests (both sentinel halves)
         run: opa test policies/ --verbose
 
-      # The differential: replay the corpus the Go detector generated and
-      # require both implementations to fire the same rules. opa test proves
-      # the rules mean what their own tests say; this proves they mean what
-      # the shipping scanner does.
+      # The differential, over both halves of every sentinel. corpus.json is
+      # generated from the Go detector and requires both implementations to
+      # FIRE on the same observations. closures.json is generated from the
+      # scanner's state vocabulary and requires every sentinel to CLOSE only
+      # on evidence - no finding_condition reads host_state, so the finding
+      # corpus is structurally blind to closure drift.
+      #
+      # opa test proves the rules mean what their own tests say; this proves
+      # they mean what the shipping scanner does.
       - name: Differential against the Go detector
         run: python3 policies/tools/differential.py
 
