@@ -98,7 +98,27 @@ var pathAgnosticServices = map[string]bool{
 
 func defaultChecks() []Check {
 	return []Check{
-		{"ray-dashboard", 8265, "http", "/"},
+		// 8265 is probed at /api/version, not /. Measured against real Ray
+		// 2.9.0: / returns the dashboard's HTML shell, which is the least
+		// discriminating path in this table - any web server answers it - while
+		// /api/version returns {"ray_version": "...", "ray_commit": "..."} and
+		// so is evidence that Ray's own dashboard API answered us without
+		// credentials. Ray has no per-route authentication, so an API that
+		// answers us answers anyone who can reach the port.
+		//
+		// NOT /api/jobs/, which was the obvious choice because POST to that same
+		// path is the code-execution endpoint. Measured: GET /api/jobs/ returns
+		// each job's "entrypoint" - the customer's literal command line - plus
+		// runtime_env, which can carry environment variables. That is the most
+		// payload-adjacent document on the host, and requesting it to discard it
+		// is not a trade worth making for the same conclusion (P3). It is also
+		// why "job" is a forbidden substring in the benign-path allowlist.
+		//
+		// The ceiling, stated: a Ray old enough not to serve /api/version would
+		// be reported as an unidentified service on 8265 at Info rather than as
+		// this Critical. Verified present on 2.9.0; the endpoint reports a
+		// dashboard API version of its own ("4"), so it is long-standing.
+		{"ray-dashboard", 8265, "http", "/api/version"},
 		{"ray-client", 10001, "tcp", ""},
 		{"vllm", 8000, "http", "/v1/models"},
 		{"triton", 8000, "http", "/v2/health/ready"},

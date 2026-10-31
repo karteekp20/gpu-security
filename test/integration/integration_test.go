@@ -101,6 +101,12 @@ func findRule(findings []domain.Finding, ruleID string) *domain.Finding {
 // repo. Ray's dashboard bound to 0.0.0.0 without authentication is
 // CVE-2023-48022 / CVE-2025-62593 - the exposure ShadowRay exploited in the
 // wild. If this fails, the product's headline claim is false.
+// TestRealRayDashboardIsDetected is also the upstream guard for the probe
+// path. The dashboard is identified by an unauthenticated 2xx on
+// /api/version, which is a claim about Ray rather than about our mock, so if a
+// future Ray stops serving it this nightly job goes red and we find out before
+// a customer's report quietly downgrades the flagship Critical to an
+// unidentified port at Info.
 func TestRealRayDashboardIsDetected(t *testing.T) {
 	findings := scanHost(t, addrRay)
 

@@ -322,8 +322,14 @@ func TestDefaultProbePathsAreBenign(t *testing.T) {
 		"/":         true,
 		"/api":      true,
 		"/api/tags": true,
-		"/metrics":  true,
-		"/models":   true,
+		// Ray's dashboard API version endpoint. Added deliberately: it names
+		// the software and its version and contains nothing of the
+		// customer's. Its sibling /api/jobs/ is NOT here and must not be -
+		// a GET there returns each job's entrypoint command line, which is
+		// why "job" is a forbidden substring below.
+		"/api/version": true,
+		"/metrics":     true,
+		"/models":      true,
 		// The wildcard control probe. It exists so a catch-all server is not
 		// reported as whatever service shares its port.
 		"/ray-guard-probe-404": true,
