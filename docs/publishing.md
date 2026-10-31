@@ -230,14 +230,25 @@ git tag -a v0.2.0 -F docs/release-notes/v0.2.0.md
 git push origin v0.2.0
 ```
 
-- [ ] Workflow run green, release published and not a draft.
-- [ ] `cosign verify-blob` succeeds against a **freshly downloaded** artifact
-      (`gh release download` into a clean directory — the path a buyer takes,
-      not the workflow's own self-check).
-- [ ] `sha256sum -c SHA256SUMS` passes.
-- [ ] The downloaded binary prints `ray-guard v0.2.0`.
-- [ ] A scan of the demo stack still grades **F** with 21 findings
-      (3/6/6/3/3) — the release changed claims, not detection.
+**Done 2026-10-31 — `v0.2.0` is published** (run `41172974493`, `isDraft:
+false`, 12 assets: 4 binaries, 6 `.sigstore.json` bundles, `SHA256SUMS`,
+`sbom.cyclonedx.json`). First release that went green on the first attempt.
+
+- [x] Workflow run green, release published and not a draft.
+- [x] `cosign verify-blob` succeeds against a **freshly downloaded** artifact.
+      6/6 bundles `Verified OK` from a `gh release download` into an empty
+      directory — the path a buyer takes, not the workflow's own self-check.
+      Local client was **cosign v3.1.3**, which is the version every document
+      names as tested, so this confirms that claim and does **not** close the
+      2.x gap.
+- [x] `sha256sum -c SHA256SUMS` passes (4/4 OK).
+- [x] The downloaded binary prints `ray-guard v0.2.0`.
+- [x] A scan of the demo stack still grades **F** with 21 findings, run with
+      the **released** binary rather than a local build: `254` requested, `15`
+      responded, `13` with findings, severities `3/6/6/3/3`, `tier: L1`, and no
+      finding claiming internet exposure. Identical to `v0.1.1`'s numbers,
+      which is the point — this release changed what the report *claims*, not
+      what it *finds*, so the demo evidence slide survives the upgrade.
 
 **Do not move this tag.** The `v0.1.1` re-push below was safe only because the
 failed run created no release and the repo was private. Neither is true now.
