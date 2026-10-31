@@ -294,6 +294,21 @@ func gradeFor(s map[Severity]int, responded int, complete bool) (int, Grade) {
 	}
 }
 
+// codeExecutionRules are the rules where unauthenticated reachability IS code
+// execution, by the software's own design rather than by a flaw we are
+// guessing at. Both are verified against the real software in the integration
+// suite: Ray's dashboard serves POST /api/jobs/, which runs a caller-supplied
+// entrypoint, and TorchServe's management API registers a model from any URL
+// the caller names (CVE-2023-43654).
+//
+// It is a named set rather than a severity test because the sentence is a
+// strong claim. A future Critical that is not code execution must not inherit
+// it by being Critical, which is what keying on severity would do.
+var codeExecutionRules = map[string]bool{
+	"RG-RAY-001":        true,
+	"RG-TORCHSERVE-001": true,
+}
+
 // gradeReason states, in one plain sentence, which finding drove the grade.
 // A grade a buyer cannot trace back to a specific cause is not persuasive.
 func gradeReason(g Grade, findings []Finding, r ScanResult) string {
@@ -330,8 +345,12 @@ func gradeReason(g Grade, findings []Finding, r ScanResult) string {
 	}
 	switch g {
 	case "F":
-		return "A critical, remotely exploitable exposure is reachable: " + worst.Title +
-			". This is remote code execution, not a misconfiguration."
+		s := "A critical exposure is reachable: " + worst.Title + "."
+		if codeExecutionRules[worst.RuleID] {
+			s += " Reaching it is sufficient to run code on it: remote code execution" +
+				" by the software's own design, not a misconfiguration of yours."
+		}
+		return s
 	case "C":
 		return "A high-severity exposure is reachable: " + worst.Title +
 			". Tenant isolation cannot be assured while this is open."

@@ -86,15 +86,23 @@ Re-run the scan to completion before treating it as an assessment.</p>
 
 <h2>Why this matters</h2>
 <div class="note">
-<p>An unauthenticated Ray dashboard is not a hardening gap &mdash; it is remote code execution.
-Ray's Jobs API accepts job submissions from anyone who can reach it, and by design that means
-arbitrary code runs on your cluster with the permissions of the Ray worker.</p>
-<p>This is tracked as <strong>CVE-2023-48022</strong> and <strong>CVE-2025-62593</strong>, and it has been
-exploited in the wild: the <strong>ShadowRay</strong> campaign compromised exposed Ray clusters to steal
-credentials and mine cryptocurrency on rented GPUs. Exposed clusters were found by internet-wide
-scanning, not by targeting.</p>
-<p>The exposure above was confirmed by observation only &mdash; a single benign GET request. No
-job was submitted and no code was executed against your infrastructure.</p>
+<p><strong>What we observed.</strong> Ray&rsquo;s dashboard API answered an unauthenticated GET to
+<code>/api/version</code> on the host(s) listed above. Ray has no per-route authentication, so an
+API that answers us answers anyone who can reach that port.</p>
+<p><strong>What that means.</strong> The same API serves <code>POST /api/jobs/</code>, which accepts
+an entrypoint from any caller and runs it on the cluster with the Ray worker&rsquo;s permissions.
+That is remote code execution by the software&rsquo;s own design, which is why
+<strong>CVE-2023-48022</strong> is disputed rather than patched: there is no fixed version to
+upgrade to, so reachability is the entire control. <strong>CVE-2025-62593</strong> is version-specific
+and <em>is</em> on CISA&rsquo;s Known Exploited Vulnerabilities catalogue. This assessment did not
+determine your Ray version, so treat that one as applicable-if-vulnerable rather than as a
+confirmed finding about this host.</p>
+<p><strong>Why it is not theoretical.</strong> The <strong>ShadowRay</strong> campaign compromised
+exposed Ray clusters to steal credentials and mine cryptocurrency on rented GPUs, and the clusters
+were found by internet-wide scanning rather than by targeting.</p>
+<p><strong>What we did not do.</strong> One benign GET, to a version endpoint. We did not submit a
+job, did not list your jobs &mdash; that response carries each job&rsquo;s command line, so we do not
+request it &mdash; and executed nothing. No response body was inspected, parsed, logged or stored.</p>
 </div>
 
 

@@ -52,5 +52,5 @@
   },
   "score": 40,
   "grade": "F",
-  "grade_reason": "A critical, remotely exploitable exposure is reachable: Unauthenticated Ray dashboard / Jobs API exposed. This is remote code execution, not a misconfiguration."
+  "grade_reason": "A critical exposure is reachable: Unauthenticated Ray dashboard / Jobs API exposed. Reaching it is sufficient to run code on it: remote code execution by the software's own design, not a misconfiguration of yours."
 }
