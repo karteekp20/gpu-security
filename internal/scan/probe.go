@@ -800,7 +800,7 @@ func parseBucketURL(raw string) (*url.URL, error) {
 	return u, nil
 }
 
-// ProbeBucket checks whether an object-storage bucket lists publicly. It
+// ProbeBucket checks whether an object-storage bucket lists without credentials. It
 // issues one unauthenticated GET and decides from the STATUS CODE ALONE. The
 // response body is discarded unparsed: object keys are customer data, not
 // metadata, so we never look at them (P3).

@@ -73,6 +73,23 @@ th{color:var(--muted);font-weight:600;font-size:.85rem}
 <h2>Findings</h2>
 <p>No exposure findings on the scanned targets.</p>
 
+<h2>How this grade was reached</h2>
+<p class="facts">The grade is driven by the <strong>single worst finding</strong>, not by an average
+or a count &mdash; one critical exposure is one way in, and nine clean ports do not offset it. The
+first row that matches decides the result:</p>
+<table><thead><tr><th>If</th><th>Score</th><th>Grade</th></tr></thead><tbody>
+<tr><td>any <span class="sev critical">critical</span> finding</td><td>40</td><td>F</td></tr>
+<tr><td>else any <span class="sev high">high</span> finding</td><td>60</td><td>C</td></tr>
+<tr><td>else any <span class="sev medium">medium</span> finding</td><td>78</td><td>B</td></tr>
+<tr><td>else nothing responded, or the scan was stopped early, or our own probes failed</td><td>&mdash;</td><td>N/A</td></tr>
+<tr><td>else any <span class="sev low">low</span> or <span class="sev info">info</span> finding</td><td>90</td><td>A</td></tr>
+<tr><td>else no exposure observed</td><td>100</td><td>A+</td></tr>
+</tbody></table>
+<p class="facts">Note the order: a finding we <em>did</em> observe stands even if the scan did not
+finish, because an observed exposure is evidence either way. The reverse does not hold &mdash; an
+incomplete or unreached scan can never earn a clean grade, because absence of coverage is not
+absence of exposure.</p>
+
 <h2>Scope &amp; method</h2>
 <p class="facts">This is an agentless, read-only Level 1 assessment run from outside the hosts. It
 observes which services are reachable, whether they require authentication, and their transport

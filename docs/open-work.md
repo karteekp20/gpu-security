@@ -6,7 +6,7 @@ re-deriving context. It is the *live backlog*. It is **not** a source of truth:
 outrank anything written here. If this file and a decision row disagree, the
 decision row wins and this file is wrong.
 
-**Last updated:** 2026-10-31 · **`main` at the time:** `8b32710`
+**Last updated:** 2026-10-31 · **`main` at the time:** `8b32710` (+ PR #5: G1, G7, G8)
 
 ---
 
@@ -53,14 +53,14 @@ review; C-items are chart work; D-items are decisions to record.**
 | # | Item | Where |
 | :-- | :-- | :-- |
 | G4 | Ray identified by `/api/version`, not `/`; report separates observation from consequence; the "remote code execution" sentence is keyed to `codeExecutionRules` rather than to severity | PR #4, `8b32710`. Also eliminated a **false Critical**: a plain web server on 8265 answers 200 on `/` and 404 on the wildcard control, so it was graded **F / critical RG-RAY-001** and is now **A / Info** |
+| G1 | **Four** titles no longer claim internet exposure (`RG-TRITON-002`, `RG-TORCHSERVE-002`, `RG-DCGM-001`, and `RG-BUCKET-001`, which the review did not name but had the same defect). Both Go and Rego sides, with a note in `detect.go` so the reason survives the next person who wants a punchier title. Verified by mutation: drifting one Rego title fails `TestGoAndRegoRuleSetsAgree` | PR #5 |
+| G7 | The report prints a "How this grade was reached" table: first-match-wins rows from `gradeFor`, plus the ordering point — an observed finding stands even on an unfinished scan, but an unfinished scan can never earn a clean grade. HTML only; the matrix is static documentation, not data about a particular scan, so it is not duplicated into every JSON | PR #5 |
+| G8 | §3 now reads "Agentless, read-only **active** probe … (one benign GET per check plus a wildcard control; nothing is installed and no credentials are used)" | PR #5 |
 
 ### Open — no decision needed, safe to start
 
 | # | Item | Anchors | Acceptance criterion |
 | :-- | :-- | :-- | :-- |
-| **G1** | Three rule titles claim internet exposure on private address space. The scanner cannot know internet exposure; it knows reachability from one vantage (which is why `scanned_from` exists). It is in the **title** — the most-read string in the report | `internal/scan/detect.go:30` `:55` `:65`; mirrored in `policies/orchestrator/triton_metrics.rego`, `torchserve_metrics.rego`, `dcgm_exporter.rego` | No output string asserts internet exposure. Parity test and both differential corpora green (titles are parity-enforced across Go and Rego, so **both sides plus the corpora** must change together) |
-| **G7** | The grade matrix is not in the report. `grade_reason` names the driving finding, but the mapping (`Critical→40/F`, `High→60/C`, `Medium→78/B`, `Low\|Info→90/A`, none→`100/A+`, unreached\|incomplete→`N/A`) appears nowhere a buyer can see | `internal/domain/types.go:280` is the source of truth; render in `internal/report/report.go` | A reader can reconstruct the score from the page. Do **not** adopt the reviewer's richer model (exploitability, asset criticality, business impact) — every input needs data L1 does not have |
-| **G8** | §3 calls L1 "Passive". It is an active, benign, read-only probe: one GET per check plus a wildcard control | `CLAUDE.md:95` | Wording is "agentless, read-only active assessment" |
 | **G5** | The report cannot be reproduced from itself. `-ports`, `-cidr`, `-timeout`, `-concurrency` are absent. A host recorded `no-response` at `-timeout 1s` is a different claim from the same host at 5s, and the reader cannot tell which they hold | `domain.Run` / `ScanResult` at `internal/domain/types.go:214`; flags in `cmd/ray-guard/main.go` | A reader can reproduce the scan from the report alone. Already present and **not** to be re-added: `scanned_from`, duration, coverage counts, `probe_errors`, probe-failed vs filtered |
 | **G6** | Half done. The report narrative now says the version was not determined and marks `CVE-2025-62593` applicable-if-vulnerable, but `detect.go:21` still attaches both CVEs to the finding and the JSON still emits `"cves"` unqualified, so a machine consumer sees an unqualified claim | `internal/scan/detect.go:21`; `domain.Finding.CVEs` | A version-dependent CVE is not asserted about a host whose version is unknown, in **JSON as well as prose**. `CVE-2023-48022` stays as-is: no fixed version exists, so reachability is the whole control |
 

@@ -1,4 +1,4 @@
-# RG-DCGM-001 - NVIDIA DCGM exporter publicly reachable
+# RG-DCGM-001 - NVIDIA DCGM exporter reachable without authentication
 #
 # Medium rather than low, and the distinction is the point: unlike one
 # service's counters, DCGM labels per-GPU utilization with the pod and
@@ -39,7 +39,7 @@ verification_condition if {
 
 finding_metadata := {
 	"id": "RG-DCGM-001",
-	"title": "NVIDIA DCGM exporter publicly reachable",
+	"title": "NVIDIA DCGM exporter reachable without authentication",
 	"severity": "medium",
 	"cve": [],
 	"remediation": "Restrict port 9400 to your monitoring network (in Kubernetes, a ClusterIP service with internalTrafficPolicy: Local rather than a NodePort). The metrics name the pod and namespace using each GPU, so this enumerates tenant workloads.",

@@ -15,6 +15,13 @@ type ruleDef struct {
 	cves        []string
 }
 
+// A title states what was OBSERVED, never what was inferred about exposure.
+// The scanner learns reachability from one vantage; it cannot learn internet
+// exposure, which is why ScanResult records ScannedFrom. Four titles used to
+// say "publicly reachable" and were factually wrong on every RFC 1918 scan -
+// including the demo stack's own 172.31.77.0/24 - in the single most-read
+// string in the report. "Internet-exposed" is a claim for something
+// independently verified, which L1 never does.
 var rules = map[string]ruleDef{
 	"ray-dashboard": {"RG-RAY-001", "Unauthenticated Ray dashboard / Jobs API exposed", domain.Critical,
 		"Enable Ray authentication or bind the dashboard to loopback/a private subnet; never expose port 8265 publicly.",
@@ -27,7 +34,7 @@ var rules = map[string]ruleDef{
 		"Restrict Triton HTTP/gRPC endpoints to trusted networks; add an auth proxy.", nil},
 	"triton-grpc": {"RG-TRITON-003", "NVIDIA Triton gRPC endpoint reachable", domain.Medium,
 		"Restrict the Triton gRPC port (8001) to trusted networks; front it with an auth proxy.", nil},
-	"triton-metrics": {"RG-TRITON-002", "Triton metrics endpoint publicly reachable", domain.Low,
+	"triton-metrics": {"RG-TRITON-002", "Triton metrics endpoint reachable without authentication", domain.Low,
 		"Restrict the metrics port (8002) to your monitoring network.", nil},
 	"mlflow": {"RG-MLFLOW-001", "Unauthenticated MLflow server exposed", domain.High,
 		"Put MLflow behind authentication; restrict network exposure.", nil},
@@ -52,7 +59,7 @@ var rules = map[string]ruleDef{
 	"torchserve-mgmt": {"RG-TORCHSERVE-001", "Unauthenticated TorchServe management API exposed", domain.Critical,
 		"This answered without a token, so token authorization is disabled (--disable-token-auth) or this build predates it: re-enable it, bind the management API (8081) to loopback, and set allowed_urls to the registries you actually use. Note that the official pytorch/torchserve image ships a config.properties binding inference, management, metrics and both gRPC addresses to 0.0.0.0, so a container run from it is exposed on every interface by default. Upstream TorchServe is archived and will get no further security patches, so network isolation is the durable control rather than an upgrade.",
 		[]string{"CVE-2023-43654"}},
-	"torchserve-metrics": {"RG-TORCHSERVE-002", "TorchServe metrics endpoint publicly reachable", domain.Low,
+	"torchserve-metrics": {"RG-TORCHSERVE-002", "TorchServe metrics endpoint reachable without authentication", domain.Low,
 		"Restrict the metrics port (8082) to your monitoring network.", nil},
 	"sglang": {"RG-SGLANG-001", "Unauthenticated SGLang inference API exposed", domain.High,
 		"Place SGLang behind an authenticated gateway; bind --host to loopback or a private address rather than exposing port 30000.", nil},
@@ -62,7 +69,7 @@ var rules = map[string]ruleDef{
 	// each device, so an exposed exporter is a workload inventory of every
 	// tenant on the node - which is the cross-tenant visibility this product
 	// exists to talk about.
-	"dcgm-exporter": {"RG-DCGM-001", "NVIDIA DCGM exporter publicly reachable", domain.Medium,
+	"dcgm-exporter": {"RG-DCGM-001", "NVIDIA DCGM exporter reachable without authentication", domain.Medium,
 		"Restrict port 9400 to your monitoring network (in Kubernetes, a ClusterIP service with internalTrafficPolicy: Local rather than a NodePort). The metrics name the pod and namespace using each GPU, so this enumerates tenant workloads.", nil},
 }
 
@@ -78,7 +85,7 @@ var (
 	// auditor if we miss it.
 	ruleTLSObsolete = ruleDef{"RG-TLS-003", "Obsolete TLS version negotiated", domain.Medium,
 		"Disable TLS 1.0 and 1.1 on this listener and require TLS 1.2 or later (RFC 8996); on a terminating proxy this is one directive.", nil}
-	ruleBucketPublic = ruleDef{"RG-BUCKET-001", "Object storage bucket lists publicly", domain.High,
+	ruleBucketPublic = ruleDef{"RG-BUCKET-001", "Object storage bucket lists without authentication", domain.High,
 		"Remove public-read/list permissions from the bucket and require authenticated access.", nil}
 	ruleUnknownExposure = ruleDef{"RG-EXPOSURE-001", "Unidentified service reachable on an AI-infrastructure port", domain.Info,
 		"Confirm what is listening on this port and whether it should be reachable from the scan vantage point.", nil}

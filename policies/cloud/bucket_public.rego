@@ -1,8 +1,10 @@
-# RG-BUCKET-001 - Object storage bucket lists publicly
+# RG-BUCKET-001 - Object storage bucket lists without authentication
 #
 # Decided from the STATUS CODE ALONE. The response body is discarded
 # unparsed: object keys are customer data, not metadata, so the scanner never
-# looks at them (P3). "The listing is public" is provable without reading it.
+# looks at them (P3). "It listed without credentials" is provable without
+# reading it - and is all we can claim: the endpoint's reachability from the
+# scan vantage is not evidence that it is reachable from the internet.
 #
 # Mirrors internal/scan/detect.go; parity is enforced by
 # internal/scan/rule_parity_test.go.
@@ -30,7 +32,7 @@ verification_condition if {
 
 finding_metadata := {
 	"id": "RG-BUCKET-001",
-	"title": "Object storage bucket lists publicly",
+	"title": "Object storage bucket lists without authentication",
 	"severity": "high",
 	"cve": [],
 	"remediation": "Remove public-read/list permissions from the bucket and require authenticated access.",
