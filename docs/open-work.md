@@ -13,7 +13,7 @@ decision row wins and this file is wrong.
 ## 1. Where the project stands
 
 - Phase 0 is **built, published and released**. Public at
-  <https://github.com/karteekp20/gpu-security>, `v0.1.1` signed with Sigstore
+  <https://github.com/karteekp20/gpu-security>, `v0.2.0` signed with Sigstore
   bundles and verified over an unauthenticated download.
 - `main` is green on all four CI jobs (`build-and-test`, `golangci-lint`,
   `policy`, `supply-chain`). The nightly `Integration (real services)` job and
@@ -167,5 +167,5 @@ These are habits that found real defects, not ceremony:
 - **Open verification gap needing a human:** whether a buyer on cosign 2.x can
   verify our `v0.3` Sigstore bundles. Every document names v3.1.3 as the tested
   version and labels 2.x as untested inference. Closing it means running
-  `cosign v2.4.3 verify-blob --bundle` against a `v0.1.1` artifact; downloading
+  `cosign v2.4.3 verify-blob --bundle` against a `v0.2.0` artifact; downloading
   and running a third-party binary was refused in-session, correctly.

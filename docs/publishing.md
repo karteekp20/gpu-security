@@ -216,6 +216,32 @@ false`, 12 assets: 4 binaries, 6 `.sigstore.json` bundles, `SHA256SUMS`,
 - [x] The binary runs: the downloaded `ray-guard-linux-amd64` prints
       `ray-guard v0.1.1`.
 
+### v0.2.0 — cut 2026-10-31
+
+Cut because the decks and the artifact had started contradicting each other:
+`v0.1.1`'s report claims internet exposure on private address space, asserts
+remote code execution from an HTTP 200, and grades a clean host `A+ 100/100`.
+All three are corrected on `main`, and a demo deck that has to apologise for
+its own output in front of a buyer is worse than no deck
+(`docs/release-notes/v0.2.0.md`).
+
+```bash
+git tag -a v0.2.0 -F docs/release-notes/v0.2.0.md
+git push origin v0.2.0
+```
+
+- [ ] Workflow run green, release published and not a draft.
+- [ ] `cosign verify-blob` succeeds against a **freshly downloaded** artifact
+      (`gh release download` into a clean directory — the path a buyer takes,
+      not the workflow's own self-check).
+- [ ] `sha256sum -c SHA256SUMS` passes.
+- [ ] The downloaded binary prints `ray-guard v0.2.0`.
+- [ ] A scan of the demo stack still grades **F** with 21 findings
+      (3/6/6/3/3) — the release changed claims, not detection.
+
+**Do not move this tag.** The `v0.1.1` re-push below was safe only because the
+failed run created no release and the repo was private. Neither is true now.
+
 **It took two attempts, and the first failure is the useful part.** The
 initial `v0.1.1` build failed in the signing step: cosign 3 ignores
 `--output-signature`/`--output-certificate` and wants `--bundle`. The installer
