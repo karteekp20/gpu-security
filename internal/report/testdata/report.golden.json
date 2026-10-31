@@ -1,5 +1,6 @@
 {
   "scanner_version": "0.2.0-dev",
+  "tier": "L1",
   "label": "Example Neocloud - cluster A - 2026-09-20",
   "scanned_from": "assessor-laptop",
   "started_at": "2026-09-20T14:00:00Z",

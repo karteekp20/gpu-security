@@ -55,7 +55,7 @@ th{color:var(--muted);font-weight:600;font-size:.85rem}
   <div class="grade g-F">F</div>
   <div>
     <p class="reason">Treat this as a floor, not a verdict: 11 probe(s) failed inside the scanner, so exposure may have been missed. What was observed: Unauthenticated Ray dashboard / Jobs API exposed. This is the scanner hitting a local limit, not a finding about the targets: lower -concurrency, or raise the host&#39;s hard open-file limit (ulimit -Hn; the soft limit is raised automatically), then re-run.</p>
-    <p class="facts">Score 40/100 &middot; 3 target(s) in 12s &middot; 2 responded &middot; 2 with findings</p>
+    <p class="facts">Level 1 &middot; Score 40/100 &middot; 3 target(s) in 12s &middot; 2 responded &middot; 2 with findings</p>
   </div>
 </div>
 <ul class="counts"><li><span class="sev critical">critical</span> 1</li><li><span class="sev medium">medium</span> 2</li></ul>
@@ -163,8 +163,12 @@ first row that matches decides the result:</p>
 <tr><td>else any <span class="sev medium">medium</span> finding</td><td>78</td><td>B</td></tr>
 <tr><td>else nothing responded, or the scan was stopped early, or our own probes failed</td><td>&mdash;</td><td>N/A</td></tr>
 <tr><td>else any <span class="sev low">low</span> or <span class="sev info">info</span> finding</td><td>90</td><td>A</td></tr>
-<tr><td>else no exposure observed</td><td>100</td><td>A+</td></tr>
+<tr><td>else no exposure observed</td><td>94</td><td>A</td></tr>
 </tbody></table>
+<p class="facts"><strong>A is the ceiling at this tier.</strong> A+ is reserved for an assessment
+that cryptographically verifies hardware attestation and fabric isolation, which needs access
+inside the hosts. A Level 1 scan cannot collect that evidence, so it does not award the grade that
+claims it &mdash; a clean result here is an A, and that is the best this tier has.</p>
 <p class="facts">Note the order: a finding we <em>did</em> observe stands even if the scan did not
 finish, because an observed exposure is evidence either way. The reverse does not hold &mdash; an
 incomplete or unreached scan can never earn a clean grade, because absence of coverage is not

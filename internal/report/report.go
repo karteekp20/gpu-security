@@ -322,7 +322,7 @@ th{color:var(--muted);font-weight:600;font-size:.85rem}
   <div class="grade g-{{gradeClass .Grade}}">{{.Grade}}</div>
   <div>
     <p class="reason">{{.GradeReason}}</p>
-    <p class="facts">{{if .Graded}}Score {{.Score}}/100 &middot; {{end}}{{if .Interrupted}}{{.TargetsScanned}} of {{.TargetsRequested}} target(s) probed{{else}}{{.TargetsScanned}} target(s){{end}} in {{.Duration}} &middot; {{.HostsResponded}} responded &middot; {{.HostsWithFindings}} with findings</p>
+    <p class="facts">Level 1 &middot; {{if .Graded}}Score {{.Score}}/100 &middot; {{end}}{{if .Interrupted}}{{.TargetsScanned}} of {{.TargetsRequested}} target(s) probed{{else}}{{.TargetsScanned}} target(s){{end}} in {{.Duration}} &middot; {{.HostsResponded}} responded &middot; {{.HostsWithFindings}} with findings</p>
   </div>
 </div>
 {{if .SevCounts}}<ul class="counts">{{range .SevCounts}}<li><span class="sev {{.Severity}}">{{.Severity}}</span> {{.Count}}</li>{{end}}</ul>{{end}}
@@ -419,8 +419,12 @@ first row that matches decides the result:</p>
 <tr><td>else any <span class="sev medium">medium</span> finding</td><td>78</td><td>B</td></tr>
 <tr><td>else nothing responded, or the scan was stopped early, or our own probes failed</td><td>&mdash;</td><td>N/A</td></tr>
 <tr><td>else any <span class="sev low">low</span> or <span class="sev info">info</span> finding</td><td>90</td><td>A</td></tr>
-<tr><td>else no exposure observed</td><td>100</td><td>A+</td></tr>
+<tr><td>else no exposure observed</td><td>94</td><td>A</td></tr>
 </tbody></table>
+<p class="facts"><strong>A is the ceiling at this tier.</strong> A+ is reserved for an assessment
+that cryptographically verifies hardware attestation and fabric isolation, which needs access
+inside the hosts. A Level 1 scan cannot collect that evidence, so it does not award the grade that
+claims it &mdash; a clean result here is an A, and that is the best this tier has.</p>
 <p class="facts">Note the order: a finding we <em>did</em> observe stands even if the scan did not
 finish, because an observed exposure is evidence either way. The reverse does not hold &mdash; an
 incomplete or unreached scan can never earn a clean grade, because absence of coverage is not

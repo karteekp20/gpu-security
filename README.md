@@ -81,7 +81,9 @@ each rejected before the scan starts, with the host or flag you probably meant �
 ray-guard chooses the ports itself (`-ports` moves a service), and `-cidr` expands blocks. An
 entry we cannot dial would otherwise be recorded as an *unresolved host*, which is
 indistinguishable from the target's DNS being broken: with one reachable host alongside it, a
-scan that never looked at something in scope graded `A+` and exited 0.
+scan that never looked at something in scope graded a clean `A+` and exited 0
+(A+ is no longer reachable at all — see §10.0 — but a clean grade on an unlooked-at
+target was the defect either way).
 
 ### Exit codes
 
@@ -139,7 +141,8 @@ command on your own machine.
 Ctrl-C stops probing immediately and still writes the report for what was
 actually reached; a second Ctrl-C abandons it. The partial report says so on
 its first line, states how many of the requested targets were probed, and
-**cannot earn a clean grade** — `A`/`A+` are claims about what is not there,
+**cannot earn a clean grade** — `A`, the Level 1 ceiling, is a claim about what is
+not there,
 and an interrupted sweep has not looked. Findings it did observe are reported
 in full and still drive the grade, as a floor rather than a verdict.
 
