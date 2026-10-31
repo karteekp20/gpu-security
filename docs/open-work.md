@@ -159,13 +159,16 @@ These are habits that found real defects, not ceremony:
 ## 7. Housekeeping, when someone wants it
 
 - Merged branches not yet deleted: `rego_rule`, `rego_rule_differential`,
-  `rego_rule_closures`, `ray_evidence_path`. `Demo_V1` is a deliberate snapshot — keep.
+  `rego_rule_closures`, `ray_evidence_path`, `report_claims`, `tier_grades`,
+  `release_v0.2.0`. `Demo_V1` is a deliberate snapshot — keep.
 - A `v0.1.0` **draft** release from 2026-09-26 was never published and is
   superseded by `v0.1.1`.
 - `.claude/settings.local.json` still pre-approves the repo visibility flip,
   which has nothing left to use it for.
 - **Open verification gap needing a human:** whether a buyer on cosign 2.x can
-  verify our `v0.3` Sigstore bundles. Every document names v3.1.3 as the tested
-  version and labels 2.x as untested inference. Closing it means running
-  `cosign v2.4.3 verify-blob --bundle` against a `v0.2.0` artifact; downloading
-  and running a third-party binary was refused in-session, correctly.
+  verify our `v0.3` Sigstore bundles. `v0.2.0` was verified end to end with the
+  locally installed **cosign v3.1.3** (6/6 bundles, 4/4 checksums), which confirms
+  the tested claim but says nothing about 2.x. Closing it means one run of
+  `cosign v2.4.3 verify-blob --bundle` against a `v0.2.0` artifact. It matters
+  because the demo talk track tells the prospect to verify the release themselves,
+  so a 2.x client failing is a trust step failing live in the room.
