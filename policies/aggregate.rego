@@ -13,28 +13,45 @@
 #    rule IDs compared. Metadata parity with divergent behaviour is the worst
 #    of both worlds - a report and a credential that cite the same rule ID and
 #    disagree about whether it fired.
+#
+# WHY THE DOMAIN PATHS ARE WRITTEN OUT. The obvious spelling walks
+# data.gpusecurity[domain][name] over a set of domain names. OPA rejects it,
+# twice over: the set is a rule, so its value "isn't known at compile time",
+# and the compiler must therefore assume `domain` could be "aggregate" - this
+# package - which makes `findings` depend on the tests that assert on
+# `findings`. Eleven rego_recursion_errors, found by `opa check --strict` in
+# CI and by nothing that runs locally.
+#
+# So each domain is a literal path. Adding a RULE to an existing domain still
+# needs no change here. Adding a DOMAIN needs two lines per aggregate, and
+# internal/scan/rule_parity_test.go fails if a domain directory exists under
+# /policies and is not walked - so the wiring cannot be forgotten, which is
+# the failure mode that would silently drop a whole tier of L2/L3 rules.
 package gpusecurity.aggregate
 
 import rego.v1
 
-# rule_domains is the set of packages the walk may enter: §8's domain list,
-# nothing else.
-#
-# It is an explicit list rather than all of data.gpusecurity because walking
-# the whole tree includes THIS package and its own tests, which made findings
-# depend on the tests that assert on findings - rego_recursion_error, caught
-# by `opa check --strict` in CI and not by anything local. Adding a rule to an
-# existing domain still needs no registration; adding a DOMAIN needs one line
-# here, and a new domain only arrives with L2/L3 evidence (CLAUDE.md §3).
-rule_domains := {"orchestrator", "cloud", "fabric", "hardware", "attestation", "k8s"}
+# rule_packages is every rule package in the library, keyed by
+# "<domain>/<name>" so two domains may hold a rule of the same name. Keyed
+# rather than a set because a set of objects would silently dedupe two
+# identical packages.
+rule_packages[key] := pkg if {
+	some name
+	pkg := data.gpusecurity.orchestrator[name]
+	key := sprintf("orchestrator/%s", [name])
+}
+
+rule_packages[key] := pkg if {
+	some name
+	pkg := data.gpusecurity.cloud[name]
+	key := sprintf("cloud/%s", [name])
+}
 
 # findings is the set of rule IDs whose finding_condition holds for input.
 findings contains id if {
-	some domain in rule_domains
-	some name
-	rule := data.gpusecurity[domain][name]
-	rule.finding_condition
-	id := rule.finding_metadata.id
+	some _, pkg in rule_packages
+	pkg.finding_condition
+	id := pkg.finding_metadata.id
 }
 
 # verified is the set of rule IDs whose verification_condition holds - the
@@ -42,19 +59,15 @@ findings contains id if {
 # purpose: a credential is issued off verified closures, so the two sets are
 # never conflated in the API either.
 verified contains id if {
-	some domain in rule_domains
-	some name
-	rule := data.gpusecurity[domain][name]
-	rule.verification_condition
-	id := rule.finding_metadata.id
+	some _, pkg in rule_packages
+	pkg.verification_condition
+	id := pkg.finding_metadata.id
 }
 
 # metadata is the whole rule catalogue, keyed by ID. The control plane needs
 # it to render a finding, and the air-gap bundle ships it as data (§13).
 metadata[id] := meta if {
-	some domain in rule_domains
-	some name
-	rule := data.gpusecurity[domain][name]
-	meta := rule.finding_metadata
+	some _, pkg in rule_packages
+	meta := pkg.finding_metadata
 	id := meta.id
 }
