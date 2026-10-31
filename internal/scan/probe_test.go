@@ -165,7 +165,7 @@ func TestTLSProbeClassifiesUntrustedCertificate(t *testing.T) {
 	port, _ := strconv.Atoi(portStr)
 
 	s := NewWithChecks(3*time.Second, nil)
-	state, _ := s.tlsProbe(context.Background(), host, port)
+	state, _ := s.tlsProbe(context.Background(), target{host, host}, port)
 	if !state.Enabled {
 		t.Fatal("expected TLS to be detected")
 	}
@@ -184,7 +184,7 @@ func TestTLSProbeRecordsNoCertificateIdentity(t *testing.T) {
 	host, portStr, _ := net.SplitHostPort(srv.Listener.Addr().String())
 	port, _ := strconv.Atoi(portStr)
 
-	state, _ := NewWithChecks(3*time.Second, nil).tlsProbe(context.Background(), host, port)
+	state, _ := NewWithChecks(3*time.Second, nil).tlsProbe(context.Background(), target{host, host}, port)
 	// Version is included here on purpose: it is the newest field on TLSState,
 	// and every field that crosses the boundary has to be checkable as posture
 	// rather than identity.
@@ -229,7 +229,7 @@ func TestTLSProbeGivesUpQuicklyOnAcceptAndHang(t *testing.T) {
 	s := NewWithChecks(probeTimeout, nil)
 
 	start := time.Now()
-	state, _ := s.tlsProbe(context.Background(), "127.0.0.1", port)
+	state, _ := s.tlsProbe(context.Background(), target{"127.0.0.1", "127.0.0.1"}, port)
 	elapsed := time.Since(start)
 
 	if state.Enabled {
@@ -262,7 +262,7 @@ func TestHandshakeTimeoutIsClamped(t *testing.T) {
 
 func TestTLSProbeOnPlaintextPort(t *testing.T) {
 	host, port := serve(t, func(w http.ResponseWriter, r *http.Request) {})
-	state, _ := NewWithChecks(2*time.Second, nil).tlsProbe(context.Background(), host, port)
+	state, _ := NewWithChecks(2*time.Second, nil).tlsProbe(context.Background(), target{host, host}, port)
 	if state.Enabled {
 		t.Errorf("a plaintext HTTP port must not be reported as TLS-enabled: %+v", state)
 	}
@@ -423,11 +423,18 @@ func TestSilentHostIsNoResponse(t *testing.T) {
 func TestIPLiteralsSkipResolution(t *testing.T) {
 	s := NewWithChecks(time.Second, nil)
 	for _, ip := range []string{"127.0.0.1", "::1", "10.1.2.3"} {
-		if !s.resolves(context.Background(), ip) {
+		tgt, n, ok := s.resolve(context.Background(), ip)
+		if !ok {
 			t.Errorf("%s is an IP literal and must always resolve", ip)
 		}
+		if tgt.addr != ip || tgt.pinned() {
+			t.Errorf("%s resolved to %+v; an address is its own target and needs no pinning", ip, tgt)
+		}
+		if n != 1 {
+			t.Errorf("%s reported %d addresses, want 1", ip, n)
+		}
 	}
-	if s.resolves(context.Background(), "ray-guard-nonexistent-host.invalid") {
+	if _, _, ok := s.resolve(context.Background(), "ray-guard-nonexistent-host.invalid"); ok {
 		t.Error("a .invalid name must not resolve")
 	}
 }
@@ -439,7 +446,7 @@ func TestPortStateDistinguishesClosedFromFiltered(t *testing.T) {
 	port, _ := strconv.Atoi(portStr)
 	_ = l.Close()
 
-	got, failed := s.portState(context.Background(), "127.0.0.1", port)
+	got, failed := s.portState(context.Background(), target{"127.0.0.1", "127.0.0.1"}, port)
 	if got != domain.PortClosed {
 		t.Errorf("loopback with nothing listening should be closed, got %s", got)
 	}
@@ -449,7 +456,7 @@ func TestPortStateDistinguishesClosedFromFiltered(t *testing.T) {
 
 	// 198.51.100.0/24 is TEST-NET-2: reserved for documentation, so packets
 	// are dropped rather than refused.
-	if got, failed := s.portState(context.Background(), "198.51.100.1", 8265); got != domain.PortFiltered {
+	if got, failed := s.portState(context.Background(), target{"198.51.100.1", "198.51.100.1"}, 8265); got != domain.PortFiltered {
 		t.Logf("TEST-NET-2 returned %s (failed=%v; network-dependent, not asserted)", got, failed)
 	}
 }
@@ -1043,6 +1050,122 @@ func TestModernTLSStillNegotiatesHigh(t *testing.T) {
 	for _, f := range Detect(obs) {
 		if f.RuleID == "RG-TLS-003" {
 			t.Errorf("RG-TLS-003 fired against modern TLS: %q", f.Detail)
+		}
+	}
+}
+
+// A name's probes must all reach the ONE address resolution chose, while the
+// request still names the host. This is the whole point of pinning: without
+// it every probe hands the name back to the resolver, so a name with several
+// A records is probed at a different machine from port to port - and the
+// report, which records the name, cannot say which machine it describes.
+//
+// The test pins a name that does not resolve at all ("...invalid" is reserved
+// for exactly this, RFC 2606). If the dial were not pinned, nothing could
+// connect, so a passing request is itself the proof.
+func TestProbesDialThePinnedAddressAndStillNameTheHost(t *testing.T) {
+	const name = "ray-guard-pinning.invalid"
+	var gotHost string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHost = r.Host
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	addr, portStr, _ := net.SplitHostPort(srv.Listener.Addr().String())
+	port, _ := strconv.Atoi(portStr)
+
+	s := NewWithChecks(2*time.Second, nil)
+	tgt := target{name: name, addr: addr}
+	if !tgt.pinned() {
+		t.Fatal("a name and an address are not the same target")
+	}
+	client, insecure := s.clientsFor(tgt)
+	if client == s.client || insecure == s.insecure {
+		t.Error("a pinned target must not reuse the shared clients, whose dialer resolves the URL host")
+	}
+
+	o, failed := s.httpProbe(context.Background(), probeCtx{tgt, client, insecure},
+		Check{"ray-dashboard", port, "http", "/api/version"}, domain.TLSState{})
+	if failed {
+		t.Fatal("the probe failed locally")
+	}
+	if o.HTTPStatus != http.StatusOK {
+		t.Fatalf("pinned probe got status %d; the dial did not reach the pinned address", o.HTTPStatus)
+	}
+	// The name is what we asked the service to be, so it has to survive into
+	// the request: a name-based virtual host serves a different site without
+	// it, and we would report the wrong one.
+	if gotHost != net.JoinHostPort(name, portStr) {
+		t.Errorf("server saw Host %q, want the operator's name %q", gotHost, name)
+	}
+	// And the finding has to be filed under the name, which is the identity
+	// the operator passed and what detect.go and the Rego input contract key on.
+	if o.Host != name {
+		t.Errorf("observation recorded host %q, want %q", o.Host, name)
+	}
+}
+
+// An address target must keep using the shared clients: a /24 sweep would
+// otherwise allocate a client pair per host for no benefit.
+func TestAddressTargetsReuseTheSharedClients(t *testing.T) {
+	s := NewWithChecks(time.Second, nil)
+	client, insecure := s.clientsFor(target{"10.1.2.3", "10.1.2.3"})
+	if client != s.client || insecure != s.insecure {
+		t.Error("an address needs no pinning and must reuse the shared clients")
+	}
+}
+
+// TLS is dialed at the pinned address but handshaken under the name, because a
+// terminating proxy picks its certificate from SNI. Handshaking with the
+// address gets the default virtual host's certificate, so we would classify a
+// certificate the service never serves to its real clients.
+func TestTLSProbeDialsTheAddressAndOffersTheNameAsSNI(t *testing.T) {
+	const name = "ray-guard-sni.invalid"
+	var gotSNI string
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	srv.TLS = &tls.Config{
+		MinVersion: tls.VersionTLS12,
+		GetConfigForClient: func(h *tls.ClientHelloInfo) (*tls.Config, error) {
+			gotSNI = h.ServerName
+			return nil, nil
+		},
+	}
+	srv.StartTLS()
+	t.Cleanup(srv.Close)
+	addr, portStr, _ := net.SplitHostPort(srv.Listener.Addr().String())
+	port, _ := strconv.Atoi(portStr)
+
+	s := NewWithChecks(3*time.Second, nil)
+	state, failed := s.tlsProbe(context.Background(), target{name: name, addr: addr}, port)
+	if failed {
+		t.Fatal("the handshake failed locally")
+	}
+	if !state.Enabled {
+		t.Fatal("TLS was not detected; the dial did not reach the pinned address")
+	}
+	if gotSNI != name {
+		t.Errorf("server saw SNI %q, want the operator's name %q", gotSNI, name)
+	}
+	// httptest's certificate is for 127.0.0.1/example.com, never our name, so
+	// verification must fail against the NAME rather than silently pass
+	// against the address we happened to dial.
+	if state.Issue == "" {
+		t.Error("a certificate that does not cover the target name must be reported as an issue")
+	}
+}
+
+// An address is not a legal SNI value (RFC 6066), and a zone is local
+// addressing rather than identity. Both must yield no SNI rather than a
+// literal Go would silently drop anyway.
+func TestSNIIsOfferedOnlyForNames(t *testing.T) {
+	for _, in := range []string{"10.1.2.3", "::1", "fe80::1%eth0", "127.0.0.1"} {
+		if got := sniName(in); got != "" {
+			t.Errorf("sniName(%q) = %q, want no SNI for an address", in, got)
+		}
+	}
+	for _, in := range []string{"ray.customer.internal", "host_1.example"} {
+		if got := sniName(in); got != in {
+			t.Errorf("sniName(%q) = %q, want the name offered as SNI", in, got)
 		}
 	}
 }

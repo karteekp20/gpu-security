@@ -370,3 +370,82 @@ func TestPrintSummaryWarnsAboutProbeFailures(t *testing.T) {
 		}
 	}
 }
+
+// multiAddressFixture is a scan of a name that fans out across three machines
+// and a plain address beside it. One address per name was probed, which is
+// the shape round-robin or headless-service DNS produces in any real cluster.
+func multiAddressFixture() domain.ScanResult {
+	full := fixture()
+	start := full.StartedAt
+	hosts := []domain.HostSummary{
+		{Host: "ray.customer.internal", State: domain.HostResponded,
+			Address: "10.0.0.5", AddressesFound: 3},
+		{Host: "10.0.0.6", State: domain.HostResponded},
+	}
+	findings := []domain.Finding{full.Findings[0]}
+	findings[0].Host = "ray.customer.internal"
+	r := domain.NewResult(domain.Run{Start: start, End: full.CompletedAt,
+		Requested: 2, Hosts: hosts, Findings: findings})
+	r.Label = full.Label
+	r.ScannedFrom = full.ScannedFrom
+	return r
+}
+
+func TestGoldenMultiAddressHTML(t *testing.T) {
+	var buf bytes.Buffer
+	if err := RenderHTML(&buf, multiAddressFixture()); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	goldenCheck(t, "multiaddress.golden.html", buf.Bytes())
+}
+
+// The coverage gap has to be stated ABOVE the findings, for the same reason
+// the degradation banner is: a reader who stops at the first table has to
+// have been told that the table describes one of three machines.
+func TestMultiAddressHTMLDisclosesTheGapBeforeTheFindings(t *testing.T) {
+	html := renderString(t, multiAddressFixture())
+	banner := strings.Index(html, "were not assessed")
+	if banner < 0 {
+		t.Fatal("no coverage-gap notice for a name that resolved to several addresses")
+	}
+	if findings := strings.Index(html, "Fix these first"); banner > findings {
+		t.Error("the coverage gap is stated below the findings; a reader who stops at the " +
+			"first table would not know this covers one machine of three")
+	}
+	for _, want := range []string{"ray.customer.internal", "10.0.0.5", "3 addresses"} {
+		if !strings.Contains(html, want) {
+			t.Errorf("the notice does not name %q", want)
+		}
+	}
+}
+
+// Every finding against a name has to say which machine answered, or it
+// cannot be re-checked - and on a fanned-out name it does not even identify
+// its own subject.
+func TestFindingsAgainstANameRecordTheProbedAddress(t *testing.T) {
+	html := renderString(t, multiAddressFixture())
+	if !strings.Contains(html, "probed at 10.0.0.5") {
+		t.Error("the host heading does not state the address its probes dialed")
+	}
+	// An address target has nothing to add, so it must not be repeated.
+	if strings.Contains(html, "probed at 10.0.0.6") {
+		t.Error("an address target was annotated with itself")
+	}
+}
+
+// The text report is what an operator sees in the terminal, and it is where
+// the remedy belongs: the gap is theirs to close by passing the addresses.
+func TestTextReportWarnsAboutUnassessedAddresses(t *testing.T) {
+	var buf bytes.Buffer
+	PrintSummary(&buf, multiAddressFixture())
+	out := buf.String()
+	for _, want := range []string{
+		"ray.customer.internal resolves to 3 addresses",
+		"only 10.0.0.5 was assessed",
+		"Pass them as targets",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the text report does not say %q:\n%s", want, out)
+		}
+	}
+}
