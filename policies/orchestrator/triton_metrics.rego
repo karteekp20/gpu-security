@@ -1,4 +1,4 @@
-# RG-TRITON-002 - Triton metrics endpoint publicly reachable
+# RG-TRITON-002 - Triton metrics endpoint reachable without authentication
 #
 # Prometheus-style endpoint: it answers 2xx on any path by design, so the
 # scanner's wildcard control is deliberately not applied to it
@@ -38,7 +38,7 @@ verification_condition if {
 
 finding_metadata := {
 	"id": "RG-TRITON-002",
-	"title": "Triton metrics endpoint publicly reachable",
+	"title": "Triton metrics endpoint reachable without authentication",
 	"severity": "low",
 	"cve": [],
 	"remediation": "Restrict the metrics port (8002) to your monitoring network.",

@@ -1,4 +1,4 @@
-# RG-TORCHSERVE-002 - TorchServe metrics endpoint publicly reachable
+# RG-TORCHSERVE-002 - TorchServe metrics endpoint reachable without authentication
 #
 # Mirrors internal/scan/detect.go; parity is enforced by
 # internal/scan/rule_parity_test.go.
@@ -34,7 +34,7 @@ verification_condition if {
 
 finding_metadata := {
 	"id": "RG-TORCHSERVE-002",
-	"title": "TorchServe metrics endpoint publicly reachable",
+	"title": "TorchServe metrics endpoint reachable without authentication",
 	"severity": "low",
 	"cve": [],
 	"remediation": "Restrict the metrics port (8082) to your monitoring network.",
