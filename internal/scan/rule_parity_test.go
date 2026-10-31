@@ -301,3 +301,51 @@ func validSeverity(s domain.Severity) bool {
 	}
 	return false
 }
+
+// TestAggregateWalksEveryPolicyDomain guards the one thing that cannot be
+// expressed inside the aggregator: it lists its domain paths literally,
+// because a rule-valued set made OPA treat the walk as possibly recursive.
+// Literal paths mean a new domain has to be wired in by hand, and forgetting
+// would silently drop a whole tier of rules from every evaluation - the
+// control plane would return "no findings" for L2 and L3 and look correct.
+func TestAggregateWalksEveryPolicyDomain(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join(policiesDir, "aggregate.rego"))
+	if err != nil {
+		t.Fatalf("reading the aggregator: %v", err)
+	}
+	src := string(b)
+
+	entries, err := os.ReadDir(policiesDir)
+	if err != nil {
+		t.Fatalf("reading %s: %v", policiesDir, err)
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		switch e.Name() {
+		case "lib", "tools", "testdata":
+			continue // not rule domains
+		}
+		// A domain directory with no rules in it yet does not need wiring.
+		rules, err := filepath.Glob(filepath.Join(policiesDir, e.Name(), "*.rego"))
+		if err != nil {
+			t.Fatalf("globbing %s: %v", e.Name(), err)
+		}
+		hasRule := false
+		for _, r := range rules {
+			if !strings.HasSuffix(r, "_test.rego") {
+				hasRule = true
+				break
+			}
+		}
+		if !hasRule {
+			continue
+		}
+		if !strings.Contains(src, "data.gpusecurity."+e.Name()+"[") {
+			t.Errorf("policies/%s/ holds rules but aggregate.rego never walks "+
+				"data.gpusecurity.%s - every evaluation would silently skip them",
+				e.Name(), e.Name())
+		}
+	}
+}

@@ -112,6 +112,13 @@ jobs:
       - name: Rule tests (both sentinel halves)
         run: opa test policies/ --verbose
 
+      # The differential: replay the corpus the Go detector generated and
+      # require both implementations to fire the same rules. opa test proves
+      # the rules mean what their own tests say; this proves they mean what
+      # the shipping scanner does.
+      - name: Differential against the Go detector
+        run: python3 policies/tools/differential.py
+
   # We are a security product and therefore a high-value target (CLAUDE.md P8).
   # Scan our own dependencies and code on every change.
   supply-chain:

@@ -23,9 +23,15 @@ finding_condition if {
 # Verification sentinel: the chain now verifies, or the port is gone.
 # Deliberately NOT satisfied by "TLS is still on" - a replaced certificate
 # that still fails verification is not a fix.
-verification_condition if lib.tls_chain_verified(input)
+verification_condition if {
+	input.service == "tls"
+	lib.tls_chain_verified(input)
+}
 
-verification_condition if lib.isolated(input)
+verification_condition if {
+	input.service == "tls"
+	lib.isolated(input)
+}
 
 finding_metadata := {
 	"id": "RG-TLS-001",

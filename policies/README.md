@@ -69,16 +69,50 @@ Nothing in this contract can carry customer payload. That is enforced on the
 Go side by `test/metadata_only_test.go`, which is why the rules reason over
 status codes and transport posture and never over response content.
 
+## How the control plane builds the verification input
+
+A rule evaluates one observation, but **a fixed port produces no observation
+at all** — the scanner stops at the TCP state and never probes it. So the
+control plane synthesizes the verification input: for each open finding it
+looks up that `host:port` in the newest scan and, when nothing was observed
+there, builds
+
+```json
+{ "service": "<the finding's service>", "state": "closed" | "filtered",
+  "http_status": 0, "tls": {"enabled": false}, "host_state": "<from the scan>" }
+```
+
+carrying the service forward from the finding. That is why every
+`verification_condition` also binds its own service: a sentinel may only speak
+about observations it applies to. Before that scoping existed, a Ray
+observation returning 401 satisfied `RG-BUCKET-001`'s closure — "the
+unauthenticated request was refused" is true of it and completely irrelevant.
+
 ## Running it
 
 ```bash
-make test            # structural: both halves present, metadata parses,
-                     # a test per rule, no drift from detect.go. No opa needed.
-make test-policies   # semantic: opa check --strict + opa test. Needs opa.
+make test            # structural: both halves present, metadata parses, a
+                     # test per rule, a dark-host case per rule, no drift
+                     # from detect.go, corpus current. No opa needed.
+make test-policies   # semantic: opa check --strict, opa test, and the
+                     # differential against the Go detector. Needs opa.
 ```
 
-Both run in CI — the structural half inside the Go suite, the semantic half in
-the `policy` job with OPA pinned to 1.22.0.
+Three gates, and they check different things:
+
+| Gate | Proves | Where |
+| :-- | :-- | :-- |
+| `rule_parity_test.go` | the two sides agree on IDs, severities, remediation text, CVEs; every rule has both halves and a test | Go suite |
+| `opa test` | the rules mean what their own tests say (106 assertions) | `policy` job |
+| `differential.py` | the rules fire on exactly what the **shipping scanner** fires on | `policy` job |
+
+The third is the one that is easy to skip and expensive to omit: metadata
+parity with divergent behaviour is the worst of both worlds, a report and a
+credential citing the same rule ID while disagreeing about whether it fired.
+The corpus (`testdata/corpus.json`) is generated from the Go detector, because
+that is the side with real traffic behind it, and `make test` fails if it goes
+stale. A new rule with no firing case in the corpus also fails — so a rule
+cannot be added without being compared.
 
 ## Why the rules exist twice
 

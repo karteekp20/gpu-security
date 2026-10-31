@@ -17,11 +17,20 @@ finding_condition if {
 # Verification sentinel. Two deterministic closures, and nothing else:
 #   - the port no longer accepts connections (isolation), or
 #   - the service now answers 401/403 (authentication enforced).
-# Both require the host to have answered in the verifying scan, so a dark
-# subnet cannot close this finding. See policies/lib/evidence.rego.
-verification_condition if lib.isolated(input)
+#
+# Both bind the service and require the host to have answered in the
+# verifying scan, so neither a dark subnet nor an unrelated observation can
+# close this finding. See policies/lib/evidence.rego for the precondition and
+# policies/README.md for how the control plane builds this input.
+verification_condition if {
+	input.service == "sglang"
+	lib.isolated(input)
+}
 
-verification_condition if lib.auth_enforced(input)
+verification_condition if {
+	input.service == "sglang"
+	lib.auth_enforced(input)
+}
 
 finding_metadata := {
 	"id": "RG-SGLANG-001",

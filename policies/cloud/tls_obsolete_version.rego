@@ -24,9 +24,15 @@ finding_condition if {
 # port is gone. Note that an absent version does NOT close this: the scanner
 # records "" for a version it does not recognize, and treating "we could not
 # tell" as "fixed" is the same error as closing a finding on a dark host.
-verification_condition if lib.tls_version_modern(input)
+verification_condition if {
+	input.service == "tls"
+	lib.tls_version_modern(input)
+}
 
-verification_condition if lib.isolated(input)
+verification_condition if {
+	input.service == "tls"
+	lib.isolated(input)
+}
 
 finding_metadata := {
 	"id": "RG-TLS-003",
