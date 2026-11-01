@@ -35,10 +35,15 @@ type regoRule struct {
 	path     string
 	pkg      string
 	metadata struct {
-		ID          string   `json:"id"`
-		Title       string   `json:"title"`
-		Severity    string   `json:"severity"`
-		CVE         []string `json:"cve"`
+		ID        string   `json:"id"`
+		Title     string   `json:"title"`
+		Severity  string   `json:"severity"`
+		CVE       []string `json:"cve"`
+		CVEUnconf []struct {
+			ID      string `json:"id"`
+			FixedIn string `json:"fixed_in"`
+			Why     string `json:"why"`
+		} `json:"cve_unconfirmed"`
 		Remediation string   `json:"remediation"`
 		Compliance  []string `json:"compliance"`
 	}
@@ -247,11 +252,40 @@ func TestGoAndRegoRuleSetsAgree(t *testing.T) {
 				id, g.remediation, r.metadata.Remediation)
 		}
 		gotCVEs := append([]string(nil), r.metadata.CVE...)
-		wantCVEs := append([]string(nil), g.cves...)
+		wantCVEs := assertedCVEs(g.cves)
 		sort.Strings(gotCVEs)
 		sort.Strings(wantCVEs)
 		if strings.Join(gotCVEs, ",") != strings.Join(wantCVEs, ",") {
-			t.Errorf("%s CVEs differ: go %v, rego %v", id, wantCVEs, gotCVEs)
+			t.Errorf("%s asserted CVEs differ: go %v, rego %v", id, wantCVEs, gotCVEs)
+		}
+		// The unconfirmed list is compared field by field, not just by ID.
+		// `why` is the text that tells a reader which check settles the CVE,
+		// so Go and Rego drifting on it means the report and a future
+		// credential would hand the same person two different instructions.
+		wantUnconf := unconfirmedCVEs(g.cves)
+		if len(r.metadata.CVEUnconf) != len(wantUnconf) {
+			t.Errorf("%s unconfirmed CVE count differs: go %d, rego %d",
+				id, len(wantUnconf), len(r.metadata.CVEUnconf))
+			continue
+		}
+		byID := map[string]domain.UnconfirmedCVE{}
+		for _, c := range wantUnconf {
+			byID[c.ID] = c
+		}
+		for _, got := range r.metadata.CVEUnconf {
+			want, ok := byID[got.ID]
+			if !ok {
+				t.Errorf("%s rego cites unconfirmed %s, go does not", id, got.ID)
+				continue
+			}
+			if got.FixedIn != want.FixedIn {
+				t.Errorf("%s %s fixed_in differs: go %q, rego %q",
+					id, got.ID, want.FixedIn, got.FixedIn)
+			}
+			if got.Why != want.Why {
+				t.Errorf("%s %s why differs (a buyer reads this text):\n  go:   %q\n  rego: %q",
+					id, got.ID, want.Why, got.Why)
+			}
 		}
 		if len(r.metadata.Compliance) == 0 {
 			t.Errorf("%s has no compliance mappings; a single scan is supposed to "+

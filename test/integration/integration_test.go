@@ -120,8 +120,17 @@ func TestRealRayDashboardIsDetected(t *testing.T) {
 	if ray.Port != 8265 {
 		t.Errorf("expected the dashboard on 8265, got %d", ray.Port)
 	}
-	if len(ray.CVEs) != 2 {
-		t.Errorf("RG-RAY-001 must carry the ShadowRay CVEs, got %v", ray.CVEs)
+	// One CVE asserted, one cited as unconfirmed. This real Ray is 2.9.0, so
+	// it IS below CVE-2025-62593's 2.52.0 fix - but the scanner does not know
+	// that, because it reads no response bodies. Being right by luck is not
+	// evidence, so the report must not claim it.
+	if len(ray.CVEs) != 1 || ray.CVEs[0] != "CVE-2023-48022" {
+		t.Errorf("RG-RAY-001 must assert only CVE-2023-48022 (no fixed version exists, "+
+			"so reachability is the whole condition); got %v", ray.CVEs)
+	}
+	if len(ray.UnconfirmedCVEs) != 1 || ray.UnconfirmedCVEs[0].ID != "CVE-2025-62593" {
+		t.Errorf("RG-RAY-001 must cite CVE-2025-62593 as unconfirmed, got %+v",
+			ray.UnconfirmedCVEs)
 	}
 	if ray.Remediation == "" {
 		t.Error("a critical finding without remediation text is not actionable")
@@ -151,8 +160,27 @@ func TestRealTorchServeManagementAPIIsDetected(t *testing.T) {
 	if f.Port != 8081 {
 		t.Errorf("expected the management API on 8081, got %d", f.Port)
 	}
-	if len(f.CVEs) != 1 || f.CVEs[0] != "CVE-2023-43654" {
-		t.Errorf("RG-TORCHSERVE-001 must carry the ShellTorch CVE, got %v", f.CVEs)
+	// This is the case that forced the asserted/unconfirmed split, and it is
+	// worth stating plainly: the container under test is TorchServe 0.12.0,
+	// and NVD records CVE-2023-43654 as fixed in 0.8.2. The scanner used to
+	// assert it anyway, so our own demo stack produced a report making a false
+	// CVE claim that the operator refutes with `pip show torchserve`.
+	//
+	// It must still be CITED, because 0.8.2's "fix" (PR #2534) only added a
+	// startup warning: this very container logs "can access any URL to load
+	// models" on boot, so the behaviour is live and the reader needs to know.
+	// Asserted, no; cited with the check that settles it, yes.
+	if len(f.CVEs) != 0 {
+		t.Errorf("RG-TORCHSERVE-001 must not ASSERT a CVE bounded at 0.8.2 against a "+
+			"host whose version it never read; got %v", f.CVEs)
+	}
+	if len(f.UnconfirmedCVEs) != 1 || f.UnconfirmedCVEs[0].ID != "CVE-2023-43654" {
+		t.Fatalf("RG-TORCHSERVE-001 must cite ShellTorch as unconfirmed, got %+v",
+			f.UnconfirmedCVEs)
+	}
+	if u := f.UnconfirmedCVEs[0]; u.FixedIn != "0.8.2" || !strings.Contains(u.Why, "allowed_urls") {
+		t.Errorf("the citation must give the advisory's version and name the check that "+
+			"settles it (allowed_urls); got fixed_in=%q why=%q", u.FixedIn, u.Why)
 	}
 	// The remediation has to name token authorization, because that is the
 	// actual control and it is on by default upstream. "TorchServe has no

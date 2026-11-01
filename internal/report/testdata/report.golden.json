@@ -22,8 +22,14 @@
       "detail": "HTTP 200 without authentication on port 8265 (no TLS)",
       "remediation": "Enable Ray authentication or bind the dashboard to loopback/a private subnet; never expose port 8265 publicly.",
       "cves": [
-        "CVE-2023-48022",
-        "CVE-2025-62593"
+        "CVE-2023-48022"
+      ],
+      "cves_unconfirmed": [
+        {
+          "id": "CVE-2025-62593",
+          "fixed_in": "2.52.0",
+          "why": "Fixed in Ray 2.52.0, and this scan did not determine your version."
+        }
       ]
     },
     {

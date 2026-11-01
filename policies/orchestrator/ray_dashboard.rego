@@ -36,11 +36,26 @@ verification_condition if {
 	lib.auth_enforced(input)
 }
 
+# "cve" carries only CVEs the scan can assert: the advisory names no fixed
+# version, so the job submission API answering without authentication IS the
+# whole condition. Version-gated CVEs go in "cve_unconfirmed" - a scan that
+# reads no response bodies never learns a version, so asserting one would be a
+# claim about something nobody looked at. Both lists are kept in parity with
+# internal/scan/detect.go by TestGoAndRegoRuleSetsAgree.
+#
+# finding_metadata must stay strict JSON inside the braces: the parity test
+# reads it without an OPA dependency, so no comments and no trailing commas in
+# there.
 finding_metadata := {
 	"id": "RG-RAY-001",
 	"title": "Unauthenticated Ray dashboard / Jobs API exposed",
 	"severity": "critical",
-	"cve": ["CVE-2023-48022", "CVE-2025-62593"],
+	"cve": ["CVE-2023-48022"],
+	"cve_unconfirmed": [{
+		"id": "CVE-2025-62593",
+		"fixed_in": "2.52.0",
+		"why": "Fixed in Ray 2.52.0, and this scan did not determine your version: /api/version reports it, but we read no response bodies. It is also a different attack path from this finding - it needs a developer's browser and DNS rebinding, not network reachability. Check `ray --version`."
+	}],
 	"remediation": "Enable Ray authentication or bind the dashboard to loopback/a private subnet; never expose port 8265 publicly.",
 	"compliance": ["SOC2:CC6.1", "SOC2:CC6.6", "ISO27001:A.5.15", "ISO27001:A.8.20"]
 }

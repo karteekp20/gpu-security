@@ -35,6 +35,7 @@ th{color:var(--muted);font-weight:600;font-size:.85rem}
 .sev::before{content:"\25CF  ";font-size:.9em}
 .pill{display:inline-block;background:var(--card);border:1px solid var(--line);border-radius:.3rem;padding:.05rem .4rem;font-size:.78rem;margin:.1rem .3rem .1rem 0;white-space:nowrap}
 .ruleid{white-space:nowrap}
+.pill.unconf{border-style:dashed;font-style:italic;color:var(--muted)}
 .at{font-family:-apple-system,Segoe UI,Roboto,sans-serif;font-size:.78rem;font-weight:400;color:var(--muted)}
 .rem{color:var(--muted);font-size:.9rem;display:block;margin-top:.25rem}
 .note{background:var(--card);border-left:3px solid var(--accent);border-radius:0 .4rem .4rem 0;padding:.9rem 1.1rem;font-size:.92rem}
@@ -105,10 +106,16 @@ API that answers us answers anyone who can reach that port.</p>
 an entrypoint from any caller and runs it on the cluster with the Ray worker&rsquo;s permissions.
 That is remote code execution by the software&rsquo;s own design, which is why
 <strong>CVE-2023-48022</strong> is disputed rather than patched: there is no fixed version to
-upgrade to, so reachability is the entire control. <strong>CVE-2025-62593</strong> is version-specific
-and <em>is</em> on CISA&rsquo;s Known Exploited Vulnerabilities catalogue. This assessment did not
-determine your Ray version, so treat that one as applicable-if-vulnerable rather than as a
-confirmed finding about this host.</p>
+upgrade to, so reachability is the entire control, and that is the one CVE this assessment
+asserts about your host &mdash; the condition it describes is the condition we observed.</p>
+<p><strong>What we are not claiming.</strong> <strong>CVE-2025-62593</strong> is on CISA&rsquo;s
+Known Exploited Vulnerabilities catalogue, and you will see it cited against Ray everywhere. We
+list it as <em>unconfirmed</em> rather than as a finding, for two independent reasons: it is fixed
+in Ray <strong>2.52.0</strong> and we did not determine your version, and its attack path is a
+developer&rsquo;s browser plus DNS rebinding rather than the network reachability we measured. A
+report that asserted it would be claiming something we did not look at. Every CVE we cite but
+cannot assert is marked the same way, in the findings table and in the JSON
+(<code>cves_unconfirmed</code>), with the check that would settle it.</p>
 <p><strong>Why it is not theoretical.</strong> The <strong>ShadowRay</strong> campaign compromised
 exposed Ray clusters to steal credentials and mine cryptocurrency on rented GPUs, and the clusters
 were found by internet-wide scanning rather than by targeting.</p>
@@ -127,8 +134,8 @@ request it &mdash; and executed nothing. No response body was inspected, parsed,
 <table><thead><tr><th>Severity</th><th>Rule</th><th>Finding</th><th>Port</th></tr></thead><tbody>
 <tr>
 <td><span class="sev critical">critical</span></td>
-<td><span class="ruleid">RG-RAY-001</span><br><span class="pill">CVE-2023-48022</span><br><span class="pill">CVE-2025-62593</span></td>
-<td>Unauthenticated Ray dashboard / Jobs API exposed<span class="rem">HTTP 200 without authentication on port 8265 (no TLS)</span><span class="rem"><strong>Fix:</strong> Enable Ray authentication or bind the dashboard to loopback/a private subnet; never expose port 8265 publicly.</span></td>
+<td><span class="ruleid">RG-RAY-001</span><br><span class="pill">CVE-2023-48022</span><br><span class="pill unconf">CVE-2025-62593 &middot; unconfirmed</span></td>
+<td>Unauthenticated Ray dashboard / Jobs API exposed<span class="rem">HTTP 200 without authentication on port 8265 (no TLS)</span><span class="rem"><strong>Fix:</strong> Enable Ray authentication or bind the dashboard to loopback/a private subnet; never expose port 8265 publicly.</span><span class="rem"><strong>CVE-2025-62593 is not confirmed here (advisory says fixed in 2.52.0):</strong> Fixed in Ray 2.52.0, and this scan did not determine your version.</span></td>
 <td>8265</td>
 </tr><tr>
 <td><span class="sev medium">medium</span></td>
