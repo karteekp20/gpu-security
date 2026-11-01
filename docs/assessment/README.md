@@ -8,12 +8,20 @@ Use them in this order:
 
 | | File | When |
 | :-- | :-- | :-- |
+| — | [`plain-english.md`](plain-english.md) | Any time. The whole thing with no jargon — the problem, how the scan works, how to read the report, and the questions clients ask. Send it to a non-technical stakeholder, or read it before explaining this to one. |
 | 0 | [`outreach.md`](outreach.md) | Getting the meeting at all — who to contact, what to send, and what never to do. This is the step the gate is actually blocked on. |
 | 1 | [`demo.md`](demo.md) | First call. Show the tool on a cluster you broke on purpose, before asking for access to theirs. |
 | 2 | [`authorization.md`](authorization.md) | Before any scan of their systems. Written scope, named targets, bounded window. Not optional. |
 | 3 | [`runbook.md`](runbook.md) | The engagement itself — before, during, after. Includes the two gate questions, asked in those words. |
 | 4 | [`objections.md`](objections.md) | Read before the first call. The **do-not-claim list** at the bottom matters more than the rest. |
 | 5 | [`tools/pipeline.py`](tools/pipeline.py) | After every email, reply and call. Computes the funnel and the two gate numbers from a private CSV, and prints the anonymized tables for the public log. |
+
+**The explainer also exists as a shareable page** —
+<https://claude.ai/artifact/KCzRtCE2fAgL1xUWiZeNAF> — for sending a link rather
+than an attachment. It is **private until shared from its own Share menu**, and
+`plain-english.md` in this directory is the source of truth: change the claims
+here first, then republish the page from it, or the two will disagree in front
+of a buyer.
 
 Results go in [`../validation-log.md`](../validation-log.md), which tracks the
 gate and lists what to capture beyond yes/no.
