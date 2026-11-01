@@ -12,8 +12,32 @@ type ruleDef struct {
 	title       string
 	severity    domain.Severity
 	remediation string
-	cves        []string
+	cves        []cveCitation
 }
+
+// cveCitation is a CVE a rule cites, carrying the one fact that decides
+// whether this scanner may assert it about a host: whether the published
+// advisory names a version that fixes it.
+//
+// The split is derived from that field rather than hand-filed, so a CVE added
+// later cannot land in the wrong list by inattention. The reason it is the
+// right discriminator: we decide every rule from a status code and read no
+// response bodies, so we never learn a version. A CVE with a fixed version is
+// therefore a claim about something we did not observe, however plausible.
+// Asserting one is how a report gets refuted in the room by an operator typing
+// one command - which has already happened twice to the TorchServe rule.
+type cveCitation struct {
+	id string
+	// fixedIn is the version the advisory names as fixed, verbatim. Empty
+	// means the advisory names none, which is the only case where
+	// reachability alone is the whole condition.
+	fixedIn string
+	// why is required exactly when fixedIn is set, and must name the check
+	// that settles it. Enforced by TestEveryUnconfirmedCVESaysWhatToCheck.
+	why string
+}
+
+func (c cveCitation) asserted() bool { return c.fixedIn == "" }
 
 // A title states what was OBSERVED, never what was inferred about exposure.
 // The scanner learns reachability from one vantage; it cannot learn internet
@@ -25,7 +49,17 @@ type ruleDef struct {
 var rules = map[string]ruleDef{
 	"ray-dashboard": {"RG-RAY-001", "Unauthenticated Ray dashboard / Jobs API exposed", domain.Critical,
 		"Enable Ray authentication or bind the dashboard to loopback/a private subnet; never expose port 8265 publicly.",
-		[]string{"CVE-2023-48022", "CVE-2025-62593"}},
+		[]cveCitation{
+			// No fixed version exists: the vendor's position is that Ray is
+			// for trusted networks, so the job submission API answering
+			// without authentication IS the condition, and we observed it.
+			{id: "CVE-2023-48022"},
+			{id: "CVE-2025-62593", fixedIn: "2.52.0",
+				why: "Fixed in Ray 2.52.0, and this scan did not determine your version: " +
+					"/api/version reports it, but we read no response bodies. It is also a " +
+					"different attack path from this finding - it needs a developer's browser " +
+					"and DNS rebinding, not network reachability. Check `ray --version`."},
+		}},
 	"ray-client": {"RG-RAY-002", "Ray client server port reachable", domain.High,
 		"Restrict the Ray client port (10001) to trusted networks only.", nil},
 	"vllm": {"RG-VLLM-001", "Unauthenticated vLLM inference API exposed", domain.High,
@@ -58,7 +92,14 @@ var rules = map[string]ruleDef{
 	// which is why network isolation, not a version bump, is the durable fix.
 	"torchserve-mgmt": {"RG-TORCHSERVE-001", "Unauthenticated TorchServe management API exposed", domain.Critical,
 		"This answered without a token, so token authorization is disabled (--disable-token-auth) or this build predates it: re-enable it, bind the management API (8081) to loopback, and set allowed_urls to the registries you actually use. Note that the official pytorch/torchserve image ships a config.properties binding inference, management, metrics and both gRPC addresses to 0.0.0.0, so a container run from it is exposed on every interface by default. Upstream TorchServe is archived and will get no further security patches, so network isolation is the durable control rather than an upgrade.",
-		[]string{"CVE-2023-43654"}},
+		[]cveCitation{
+			{id: "CVE-2023-43654", fixedIn: "0.8.2",
+				why: "Do not read that version bound as 'not applicable'. The 0.8.2 release " +
+					"added a startup warning rather than changing the behaviour: TorchServe " +
+					"0.12.0's own official image still logs \"can access any URL to load " +
+					"models\" on boot. What settles this is the allowed_urls setting in " +
+					"config.properties, which an agentless scan does not read."},
+		}},
 	"torchserve-metrics": {"RG-TORCHSERVE-002", "TorchServe metrics endpoint reachable without authentication", domain.Low,
 		"Restrict the metrics port (8082) to your monitoring network.", nil},
 	"sglang": {"RG-SGLANG-001", "Unauthenticated SGLang inference API exposed", domain.High,
@@ -178,6 +219,27 @@ func mkFinding(r ruleDef, o domain.Observation, detail string) domain.Finding {
 	return domain.Finding{
 		RuleID: r.ruleID, Title: r.title, Severity: r.severity,
 		Host: o.Host, Port: o.Port, Service: o.Service,
-		Detail: detail, Remediation: r.remediation, CVEs: r.cves,
+		Detail: detail, Remediation: r.remediation,
+		CVEs: assertedCVEs(r.cves), UnconfirmedCVEs: unconfirmedCVEs(r.cves),
 	}
+}
+
+func assertedCVEs(cites []cveCitation) []string {
+	var out []string
+	for _, c := range cites {
+		if c.asserted() {
+			out = append(out, c.id)
+		}
+	}
+	return out
+}
+
+func unconfirmedCVEs(cites []cveCitation) []domain.UnconfirmedCVE {
+	var out []domain.UnconfirmedCVE
+	for _, c := range cites {
+		if !c.asserted() {
+			out = append(out, domain.UnconfirmedCVE{ID: c.id, FixedIn: c.fixedIn, Why: c.why})
+		}
+	}
+	return out
 }

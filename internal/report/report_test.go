@@ -34,7 +34,13 @@ func fixture() domain.ScanResult {
 			Host: "10.0.0.5", Port: 8265, Service: "ray-dashboard",
 			Detail:      "HTTP 200 without authentication on port 8265 (no TLS)",
 			Remediation: "Enable Ray authentication or bind the dashboard to loopback/a private subnet; never expose port 8265 publicly.",
-			CVEs:        []string{"CVE-2023-48022", "CVE-2025-62593"}},
+			// One asserted, one cited-but-unconfirmed, which is the shape the
+			// real rule now produces and the case the golden file must show.
+			CVEs: []string{"CVE-2023-48022"},
+			UnconfirmedCVEs: []domain.UnconfirmedCVE{{
+				ID: "CVE-2025-62593", FixedIn: "2.52.0",
+				Why: "Fixed in Ray 2.52.0, and this scan did not determine your version.",
+			}}},
 		{RuleID: "RG-TLS-001", Title: "TLS certificate fails verification", Severity: domain.Medium,
 			Host: "10.0.0.5", Port: 8888, Service: "tls",
 			Detail:      "Certificate on port 8888 is self-signed (expires 2027-01-01)",
@@ -446,6 +452,64 @@ func TestTextReportWarnsAboutUnassessedAddresses(t *testing.T) {
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the text report does not say %q:\n%s", want, out)
+		}
+	}
+}
+
+func renderFixtureHTML(t *testing.T) string {
+	t.Helper()
+	var buf bytes.Buffer
+	if err := RenderHTML(&buf, fixture()); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	return buf.String()
+}
+
+// TestUnconfirmedCVEIsMarkedAndExplainedInHTML is the report half of the
+// change that split asserted from unconfirmed CVEs. The pill alone is not
+// enough: a reader scanning the findings table has to be able to tell which
+// of the two a CVE is, and be told the check that settles it, without
+// leaving the row.
+func TestUnconfirmedCVEIsMarkedAndExplainedInHTML(t *testing.T) {
+	html := renderFixtureHTML(t)
+
+	if !strings.Contains(html, "CVE-2025-62593 &middot; unconfirmed") {
+		t.Error("the unconfirmed CVE is not marked as such in the findings table; a bare " +
+			"pill reads identically to an asserted CVE")
+	}
+	if !strings.Contains(html, "CVE-2025-62593 is not confirmed here (advisory says fixed in 2.52.0)") {
+		t.Error("the row does not say why the CVE is unconfirmed, or does not name the " +
+			"fixed version the advisory gives")
+	}
+	if !strings.Contains(html, "did not determine your version") {
+		t.Error("the `why` text did not reach the HTML")
+	}
+	// The asserted one must NOT be dressed up as unconfirmed.
+	if strings.Contains(html, "CVE-2023-48022 &middot; unconfirmed") {
+		t.Error("CVE-2023-48022 is asserted - the advisory names no fixed version, so " +
+			"reachability is the whole condition")
+	}
+	// Never colour alone (CLAUDE.md §7.6, and the report prints to greyscale).
+	if !strings.Contains(html, ".pill.unconf{border-style:dashed") {
+		t.Error("the unconfirmed pill has no non-colour treatment")
+	}
+}
+
+// TestTheNarrativeDoesNotAssertTheVersionGatedCVE guards the prose, which is
+// the part a buyer actually reads. It previously called CVE-2025-62593
+// "version-specific" and then leaned on its CISA KEV listing in the same
+// breath, which invites the reader to treat it as a finding.
+func TestTheNarrativeDoesNotAssertTheVersionGatedCVE(t *testing.T) {
+	html := renderFixtureHTML(t)
+	i := strings.Index(html, "What we are not claiming")
+	if i < 0 {
+		t.Fatal("the narrative no longer separates what is asserted from what is not")
+	}
+	section := html[i:]
+	for _, want := range []string{"2.52.0", "cves_unconfirmed", "DNS rebinding"} {
+		if !strings.Contains(section, want) {
+			t.Errorf("the narrative does not mention %q, so the reader cannot tell why "+
+				"we decline to assert it", want)
 		}
 	}
 }

@@ -153,9 +153,12 @@ Duplication drifts, though, and the drift would be invisible until a
 customer's report and their credential disagreed about a severity. So
 `internal/scan/rule_parity_test.go` fails the build if the two sides disagree
 on any rule ID, title, severity, remediation string or CVE list — and if
-`lib.known_services` falls out of step with the scanner's service table. All
-three mutations were checked by hand: drift a severity, delete a sentinel,
-remove a dark-host test. Each turns the suite red.
+`lib.known_services` falls out of step with the scanner's service table. The
+CVE check covers **both** lists field by field, including each unconfirmed
+CVE's `why`, because that text is the instruction a reader acts on: Go and Rego
+drifting on it would hand the same person two different checks to run. All
+mutations were checked by hand: drift a severity, delete a sentinel, remove a
+dark-host test, drift an unconfirmed CVE's `why`. Each turns the suite red.
 
 ## Conventions
 
@@ -164,7 +167,16 @@ remove a dark-host test. Each turns the suite red.
   library uses it and the skill's template should be read as pseudocode.
 - `RG-<DOMAIN>-NNN` IDs are stable and never reused.
 - `finding_metadata` is written as strict JSON inside the braces so the parity
-  test can read it without an OPA dependency.
+  test can read it without an OPA dependency. **No comments and no trailing
+  commas in there** — Rego accepts both and the parity test does not, so put
+  the commentary above the `finding_metadata :=` line.
+- **`cve` holds only CVEs the tier can assert.** If the advisory names a
+  version that fixes it, L1 cannot assert it — L1 decides every rule from a
+  status code and reads no response bodies, so it never learns a version. Such
+  a CVE goes in `cve_unconfirmed` as `{id, fixed_in, why}`, where `fixed_in` is
+  the advisory's claim verbatim and `why` names the check that settles it. See
+  the 2026-11-01 decision row; `RG-TORCHSERVE-001` is the worked case and
+  asserts no CVE at all.
 - Compliance mappings are **first-pass**. SOC 2 and ISO 27001 are the honest
   anchors (CLAUDE.md §11); they have not been reviewed by an auditor, and a
   buyer should be told that rather than shown a control number and left to

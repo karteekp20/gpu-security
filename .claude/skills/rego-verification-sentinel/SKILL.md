@@ -32,7 +32,10 @@ finding_metadata := {
     "id": "RG-<DOMAIN>-NNN",          # stable, unique
     "title": "...",
     "severity": "critical|high|medium|low|info",
-    "cve": ["..."],                       # where applicable
+    "cve": ["..."],                       # ONLY CVEs this tier can assert
+    "cve_unconfirmed": [                  # cited but not asserted; see below
+        {"id": "...", "fixed_in": "...", "why": "the check that settles it"}
+    ],
     "remediation": "the corrected config, not just 'fix it'",
     "compliance": ["SOC2:CC6.6", "ISO27001:A.8.20"]   # maps to §11
 }
@@ -49,6 +52,14 @@ finding_metadata := {
   `attestation_states.evidence_level`). "Config matches policy" is not "tenant isolation proven."
 - Keep rules pure over `input`; no imperative logic. If a check needs imperative/ML logic, route
   it to the Python policy layer, not Rego.
+- **A CVE with a published fixed version may not go in `cve`.** The scanner decides every rule
+  from a status code and reads no response bodies, so it never learns a version: asserting a
+  version-gated CVE is a claim about something nobody looked at, and it is refuted by an operator
+  typing one command. Put it in `cve_unconfirmed` with the advisory's `fixed_in` and a `why` that
+  names the check a reader can run themselves. Go/Rego parity on both lists is enforced by
+  `TestGoAndRegoRuleSetsAgree`, and the asserted list is checked against an independently
+  recorded table of advisory facts (`advisoryFacts` in `internal/scan/detect_test.go`) — so a new
+  CVE has to be looked up before it can ship.
 
 ## Tests are mandatory
 Every rule ships `<name>_test.rego` asserting BOTH:

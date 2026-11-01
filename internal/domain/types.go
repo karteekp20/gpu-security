@@ -153,7 +153,37 @@ type Finding struct {
 	Service     string   `json:"service"`
 	Detail      string   `json:"detail"`
 	Remediation string   `json:"remediation"`
-	CVEs        []string `json:"cves,omitempty"`
+	// CVEs are only the CVEs this scan can assert about this host: the
+	// condition the advisory describes is the condition we observed. A
+	// consumer may treat these as findings.
+	CVEs []string `json:"cves,omitempty"`
+	// UnconfirmedCVEs are cited but NOT asserted, because what makes them
+	// apply is something an agentless probe never sees. They are leads to
+	// check, and they are a separate field rather than entries in CVEs so
+	// that the naive read of `cves` is true rather than merely qualified
+	// somewhere else in the document.
+	UnconfirmedCVEs []UnconfirmedCVE `json:"cves_unconfirmed,omitempty"`
+}
+
+// UnconfirmedCVE is a CVE a rule cites that this scan cannot assert about the
+// host it was found on.
+//
+// The invariant that decides which list a CVE lands in is simple and is
+// enforced by TestAPublishedFixedVersionIsNeverAsserted: **if the advisory
+// names a version that fixes it, a scanner that does not determine versions
+// cannot assert it.** We read no response bodies, so we never learn a version
+// - which is a deliberate choice (see the Ray /api/version row in the decision
+// log), not an oversight to route around here.
+type UnconfirmedCVE struct {
+	ID string `json:"id"`
+	// FixedIn is the version the advisory names, verbatim and unedited. It is
+	// what the advisory claims, not what we concluded; Why carries anything we
+	// know that qualifies it.
+	FixedIn string `json:"fixed_in,omitempty"`
+	// Why states what was not observed, in terms of the check that would
+	// settle it. A reader must be able to close this themselves without
+	// asking us what we meant.
+	Why string `json:"why"`
 }
 
 // GradeInconclusive is used when no target responded, so there is no evidence

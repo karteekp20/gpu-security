@@ -19,8 +19,12 @@ func TestDetectRayUnauthIsCritical(t *testing.T) {
 	if len(f) != 1 || f[0].RuleID != "RG-RAY-001" || f[0].Severity != domain.Critical {
 		t.Fatalf("expected 1 critical RG-RAY-001, got %+v", f)
 	}
-	if len(f[0].CVEs) != 2 {
-		t.Errorf("expected ShadowRay CVEs on RG-RAY-001, got %v", f[0].CVEs)
+	// One asserted, one cited-but-unconfirmed. This used to expect 2 asserted,
+	// which was the defect: CVE-2025-62593 is fixed in Ray 2.52.0 and this
+	// scan never reads a version.
+	if len(f[0].CVEs) != 1 || len(f[0].UnconfirmedCVEs) != 1 {
+		t.Errorf("expected 1 asserted + 1 unconfirmed ShadowRay CVE on RG-RAY-001, got %v / %+v",
+			f[0].CVEs, f[0].UnconfirmedCVEs)
 	}
 }
 
@@ -187,14 +191,23 @@ func TestDetectTorchServeCarriesShellTorchCVE(t *testing.T) {
 	if len(f) != 1 {
 		t.Fatalf("expected 1 finding, got %+v", f)
 	}
+	// ShellTorch must be CITED, but as unconfirmed rather than asserted. NVD
+	// bounds CVE-2023-43654 at 0.8.2 and this rule fires on reachability
+	// alone, so asserting it on, say, 0.12.0 is a claim the operator refutes
+	// with one command. Dropping the citation would be the other error: the
+	// behaviour it describes is still the default, so the reader needs it.
 	found := false
-	for _, c := range f[0].CVEs {
-		if c == "CVE-2023-43654" {
+	for _, c := range f[0].UnconfirmedCVEs {
+		if c.ID == "CVE-2023-43654" {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("CVEs = %v, want CVE-2023-43654 (ShellTorch)", f[0].CVEs)
+		t.Errorf("unconfirmed CVEs = %+v, want CVE-2023-43654 (ShellTorch) cited there",
+			f[0].UnconfirmedCVEs)
+	}
+	if len(f[0].CVEs) != 0 {
+		t.Errorf("asserted CVEs = %v, want none", f[0].CVEs)
 	}
 }
 
@@ -273,5 +286,155 @@ func TestUnknownTLSVersionIsNotGuessedAt(t *testing.T) {
 	}}
 	if got := Detect(obs); len(got) != 0 {
 		t.Errorf("an unrecognized version raised %d finding(s): %+v", len(got), got)
+	}
+}
+
+// advisoryFacts is what the published advisories say about every CVE this
+// scanner cites, recorded here independently of the rule table so the rule
+// table can be checked against something it does not itself define. Read from
+// NVD on 2026-11-01; the value is the fixed version the advisory names, or ""
+// when it names none.
+//
+// This is deliberately not derived from detect.go. A test that asked the rule
+// table to agree with itself would pass no matter what the table claimed - and
+// the defect this guards against is exactly someone adding a CVE to a rule
+// because it is famous, without checking whether it is version-gated.
+var advisoryFacts = map[string]string{
+	// Disputed, and NVD lists no fixed version: the vendor's position is that
+	// Ray is for trusted networks. So reachability is the whole condition.
+	"CVE-2023-48022": "",
+	"CVE-2025-62593": "2.52.0",
+	"CVE-2023-43654": "0.8.2",
+}
+
+func TestEveryCitedCVEHasItsAdvisoryFactsRecorded(t *testing.T) {
+	for id, r := range goRules() {
+		for _, c := range r.cves {
+			want, ok := advisoryFacts[c.id]
+			if !ok {
+				t.Errorf("%s cites %s, which has no entry in advisoryFacts. Look the "+
+					"advisory up and record whether it names a fixed version before "+
+					"shipping the citation - that fact is what decides whether we may "+
+					"assert it", id, c.id)
+				continue
+			}
+			if c.fixedIn != want {
+				t.Errorf("%s cites %s with fixedIn %q, but the advisory says %q",
+					id, c.id, c.fixedIn, want)
+			}
+		}
+	}
+}
+
+// TestAVersionGatedCVEIsNeverAssertedOnAFinding walks the real detection path
+// rather than the rule table, because the table is only half the story: the
+// split happens in mkFinding, and that is what reaches report.json.
+func TestAVersionGatedCVEIsNeverAssertedOnAFinding(t *testing.T) {
+	gated := map[string]string{}
+	for id, fixed := range advisoryFacts {
+		if fixed != "" {
+			gated[id] = fixed
+		}
+	}
+	if len(gated) == 0 {
+		t.Fatal("no version-gated CVE in advisoryFacts; this test would prove nothing")
+	}
+
+	// Every service whose rule cites anything, through Detect, as a scan does.
+	var obsv []domain.Observation
+	port := 9000
+	for service, r := range rules {
+		if len(r.cves) > 0 {
+			// The port is arbitrary: Detect keys off the service. It only has
+			// to differ per observation so the findings stay distinct.
+			obsv = append(obsv, obs(service, port, 200, true))
+			port++
+		}
+	}
+	findings := Detect(obsv)
+	if len(findings) == 0 {
+		t.Fatal("no findings produced; the CVE-carrying rules did not fire")
+	}
+
+	var sawUnconfirmed int
+	for _, f := range findings {
+		for _, cve := range f.CVEs {
+			if fixed, bad := gated[cve]; bad {
+				t.Errorf("%s asserts %s, which the advisory says is fixed in %s. This "+
+					"scan never determines a version, so that is a claim about "+
+					"something nobody looked at - it belongs in cves_unconfirmed",
+					f.RuleID, cve, fixed)
+			}
+		}
+		for _, u := range f.UnconfirmedCVEs {
+			sawUnconfirmed++
+			if _, bad := gated[u.ID]; !bad {
+				t.Errorf("%s lists %s as unconfirmed, but the advisory names no fixed "+
+					"version, so reachability is the whole condition and it should be "+
+					"asserted", f.RuleID, u.ID)
+			}
+			for _, a := range f.CVEs {
+				if a == u.ID {
+					t.Errorf("%s has %s in both lists", f.RuleID, u.ID)
+				}
+			}
+		}
+	}
+	if sawUnconfirmed == 0 {
+		t.Error("no unconfirmed CVE reached any finding, so the split is not wired up")
+	}
+}
+
+func TestEveryUnconfirmedCVESaysWhatToCheck(t *testing.T) {
+	for id, r := range goRules() {
+		for _, c := range r.cves {
+			if c.asserted() {
+				if c.why != "" {
+					t.Errorf("%s: %s is asserted but carries a `why`, which only "+
+						"applies to a CVE we are declining to assert", id, c.id)
+				}
+				continue
+			}
+			// A bare label ("version-specific") sends the reader back to us
+			// mid-engagement. The text has to name the check that closes it.
+			if len(c.why) < 60 {
+				t.Errorf("%s: %s has no usable `why` (%q). It must name the check that "+
+					"settles the CVE, so a reader can close it without asking us",
+					id, c.id, c.why)
+			}
+		}
+	}
+}
+
+// TestTheRayRuleAssertsOnlyTheUnpatchableCVE pins the specific pair this
+// change was made for, so a future edit that re-adds the version-gated CVE to
+// the asserted list fails by name rather than only through the general rule.
+func TestTheRayRuleAssertsOnlyTheUnpatchableCVE(t *testing.T) {
+	f := Detect([]domain.Observation{obs("ray-dashboard", 8265, 200, true)})
+	if len(f) != 1 {
+		t.Fatalf("expected 1 finding, got %d", len(f))
+	}
+	if got := f[0].CVEs; len(got) != 1 || got[0] != "CVE-2023-48022" {
+		t.Errorf("asserted CVEs = %v, want only CVE-2023-48022", got)
+	}
+	if got := f[0].UnconfirmedCVEs; len(got) != 1 || got[0].ID != "CVE-2025-62593" {
+		t.Errorf("unconfirmed CVEs = %+v, want only CVE-2025-62593", got)
+	}
+}
+
+// TestTheTorchServeRuleAssertsNoCVE records that this is intended, not a gap.
+// The rule is Critical on what it observed - a management API that registers a
+// model from any URL the caller names - and that does not depend on the CVE.
+func TestTheTorchServeRuleAssertsNoCVE(t *testing.T) {
+	f := Detect([]domain.Observation{obs("torchserve-mgmt", 8081, 200, true)})
+	if len(f) != 1 || f[0].Severity != domain.Critical {
+		t.Fatalf("expected 1 critical finding, got %+v", f)
+	}
+	if len(f[0].CVEs) != 0 {
+		t.Errorf("asserted CVEs = %v; CVE-2023-43654 is bounded at 0.8.2 by NVD and "+
+			"this rule fires on reachability alone", f[0].CVEs)
+	}
+	if len(f[0].UnconfirmedCVEs) != 1 {
+		t.Fatalf("expected CVE-2023-43654 cited as unconfirmed, got %+v", f[0].UnconfirmedCVEs)
 	}
 }
