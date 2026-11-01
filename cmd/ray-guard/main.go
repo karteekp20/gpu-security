@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -74,14 +75,8 @@ func run() int {
 	// Clamp before probing, not after: past this point every extra host in
 	// flight costs descriptors we do not have, and the failure mode is a
 	// quietly weaker report rather than an error (see MaxHostConcurrency).
-	if max := scan.MaxHostConcurrency(checks); max > 0 && *concurrency > max {
-		fmt.Fprintf(os.Stderr,
-			"notice: -concurrency %d exceeds what this host's open-file limit allows; using %d.\n"+
-				"        Raise the host's hard limit (ulimit -Hn) for a faster scan. Probing\n"+
-				"        beyond the limit does not fail loudly - it silently under-reports.\n",
-			*concurrency, max)
-		*concurrency = max
-	}
+	effectiveConcurrency, requestedConcurrency := clampConcurrency(
+		*concurrency, scan.MaxHostConcurrency(checks), os.Stderr)
 
 	// Same reason as the output-path check below: an operator who mistyped one
 	// of five buckets should find out now, not from a stderr line in the
@@ -119,7 +114,7 @@ func run() int {
 	scanner := scan.NewWithChecks(*timeout, checks)
 	ctx, stopSignals := interruptible()
 	defer stopSignals()
-	sweep := probeAll(ctx, scanner, targets, buckets, *concurrency)
+	sweep := probeAll(ctx, scanner, targets, buckets, effectiveConcurrency)
 
 	// Deliberately not clever about Interrupted: a signal is taken at face
 	// value even when every target happens to have been recorded anyway. "All
@@ -127,6 +122,20 @@ func run() int {
 	// soon as one port answers, so the last host probed may have had ports cut
 	// short. Trading a withheld grade on a scan that finished in the same
 	// instant for a possible false all-clear is the wrong way round.
+	params := domain.ScanParams{
+		ProbeTimeout:  timeout.String(),
+		Concurrency:   effectiveConcurrency,
+		Ports:         probedPorts(checks),
+		PortOverrides: strings.TrimSpace(*portsArg),
+		CIDR:          splitList(*cidrArg),
+		TargetsFile:   strings.TrimSpace(*targetsFile),
+		NamedTargets:  len(splitList(*targetsArg)),
+		Buckets:       len(buckets),
+	}
+	if effectiveConcurrency != requestedConcurrency {
+		params.ConcurrencyRequested = requestedConcurrency
+	}
+
 	result := domain.NewResult(domain.Run{
 		Start: start, End: time.Now(),
 		Requested:   len(targets) + len(buckets),
@@ -134,6 +143,7 @@ func run() int {
 		Findings:    scan.Detect(sweep.observations),
 		Interrupted: sweep.interrupted,
 		ProbeErrors: sweep.probeErrors,
+		Params:      &params,
 	})
 	result.Label = strings.TrimSpace(*label)
 	// The vantage is part of the evidence: a month later, "three of twelve
@@ -356,6 +366,46 @@ func loadTargets(arg, file, cidr string, allowLarge bool) ([]string, error) {
 	}
 
 	return dedupe(out), nil
+}
+
+// clampConcurrency returns the concurrency the scan will actually run at and,
+// unchanged, the value the operator asked for. It returns both deliberately:
+// the earlier shape mutated the flag in place, so the only way to record what
+// was asked was to have copied it beforehand - a convention that holds until
+// someone moves a line. A clamped run is not marked degraded (the clamp exists
+// so the measurement stays correct), so if the report loses the requested
+// value there is nothing left in the artifact to say the machine was the
+// constraint: just a scan that took minutes, reading as the operator's choice.
+//
+// max of 0 means the limit could not be determined, in which case we impose
+// none of our own.
+func clampConcurrency(requested, max int, w io.Writer) (effective, asked int) {
+	if max <= 0 || requested <= max {
+		return requested, requested
+	}
+	fmt.Fprintf(w,
+		"notice: -concurrency %d exceeds what this host's open-file limit allows; using %d.\n"+
+			"        Raise the host's hard limit (ulimit -Hn) for a faster scan. Probing\n"+
+			"        beyond the limit does not fail loudly - it silently under-reports.\n",
+		requested, max)
+	return max, requested
+}
+
+// probedPorts is the sorted, deduplicated set of ports the check table will
+// dial. The resolved set rather than the -ports spec, because that is what a
+// reader can compare against another report and what an operator can check
+// against the authorization they signed.
+func probedPorts(checks []scan.Check) []int {
+	seen := map[int]bool{}
+	var out []int
+	for _, c := range checks {
+		if !seen[c.Port] {
+			seen[c.Port] = true
+			out = append(out, c.Port)
+		}
+	}
+	sort.Ints(out)
+	return out
 }
 
 func splitList(s string) []string {

@@ -32,7 +32,9 @@ alone against their public IPs does not count, however good the report is.
 - [ ] **Decide your timeout.** Default 4s is right for a datacenter. Over a
       VPN or a high-latency link, raise `-timeout`; a scan that reports
       "filtered" everywhere because you were impatient is worse than a slow
-      one.
+      one. Whatever you choose is printed on the report under **Scope &
+      method**, so you do not have to remember it — and neither does the
+      client when they compare this report with the next one.
 
 ## During
 

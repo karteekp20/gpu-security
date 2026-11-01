@@ -302,3 +302,84 @@ func TestResolvedAddressesNeverReachTheSnapshot(t *testing.T) {
 		}
 	}
 }
+
+// TestSnapshotHasNoFieldForTheScopeOrTheTargetList. The scan parameters now
+// travel on the report, and one of them - the target specification - is a fact
+// about the customer, not about us: a /16 says how their estate is laid out,
+// and a -targets-file path under ~/assessments/ names the client in the path
+// itself. The snapshot is the one artifact designed to leave the operator's
+// machine and be published as an aggregate (P9), so the whole ScanParams
+// struct must never be copied into it wholesale, however convenient that is.
+//
+// Asserted by value and structurally, the same way the label and the vantage
+// are: a value test catches a copy, a structural test catches a field added by
+// someone who then has nowhere to put it.
+func TestSnapshotHasNoFieldForTheScopeOrTheTargetList(t *testing.T) {
+	start := time.Date(2026, 11, 2, 9, 0, 0, 0, time.UTC)
+	r := domain.NewResult(domain.Run{
+		Start: start, End: start.Add(time.Second),
+		Requested: 254, Hosts: respondedHosts(3),
+		Params: &domain.ScanParams{
+			ProbeTimeout: "4s",
+			Concurrency:  32,
+			Ports:        []int{8265, 8888},
+			CIDR:         []string{"10.11.12.0/24"},
+			TargetsFile:  "/home/op/assessments/acme-corp/hosts.txt",
+			NamedTargets: 2,
+		},
+	})
+
+	snap, err := Build(r, time.Now())
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	b, err := json.Marshal(snap)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	for _, leak := range []string{"10.11.12.0/24", "acme-corp", "hosts.txt", "assessments"} {
+		if strings.Contains(string(b), leak) {
+			t.Errorf("P9 VIOLATION: the snapshot carries %q from the scan parameters", leak)
+		}
+	}
+
+	// The timeout, by contrast, is deliberately present: without it the index
+	// would pool "silent" hosts measured at different sensitivities.
+	if snap.ProbeTimeout != "4s" {
+		t.Errorf("ProbeTimeout = %q, want \"4s\": the index cannot compare exposure rates "+
+			"across snapshots without knowing how long a host was given to answer", snap.ProbeTimeout)
+	}
+
+	rt := reflect.TypeOf(Snapshot{})
+	for i := 0; i < rt.NumField(); i++ {
+		switch name := strings.ToLower(rt.Field(i).Name); {
+		case strings.Contains(name, "cidr"),
+			strings.Contains(name, "target") && !strings.Contains(name, "targetsscanned"),
+			strings.Contains(name, "scope"),
+			strings.Contains(name, "params"),
+			strings.Contains(name, "file"):
+			t.Errorf("Snapshot.%s: the snapshot must not have a field for the scope, "+
+				"the target list, or the parameters as a whole", rt.Field(i).Name)
+		}
+	}
+}
+
+// TestSnapshotOfAResultWithNoParametersIsStillValid. Params is a pointer
+// because absent is a real state - a result built by anything other than a
+// scanner run has no flags to report - and the snapshot path must not panic on
+// one.
+func TestSnapshotOfAResultWithNoParametersIsStillValid(t *testing.T) {
+	start := time.Date(2026, 11, 2, 9, 0, 0, 0, time.UTC)
+	r := domain.NewScanResult(start, start.Add(time.Second), respondedHosts(2), nil)
+	if r.Params != nil {
+		t.Fatal("NewScanResult set Params; this test no longer covers the nil case")
+	}
+	snap, err := Build(r, time.Now())
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if snap.ProbeTimeout != "" {
+		t.Errorf("ProbeTimeout = %q, want empty: inventing a default would report a "+
+			"measurement setting that was never used", snap.ProbeTimeout)
+	}
+}
