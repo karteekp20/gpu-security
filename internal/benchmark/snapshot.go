@@ -54,7 +54,18 @@ type Snapshot struct {
 	// Degraded marks a run during which the scanner's own probes failed, which
 	// makes its finding counts a floor rather than a measurement. Same reason
 	// as Interrupted: the index has to be able to leave it out.
-	Degraded          bool           `json:"degraded"`
+	Degraded bool `json:"degraded"`
+	// ProbeTimeout is the one scan parameter that belongs here. An aggregate
+	// claim about how exposed the industry is pools "silent" hosts from every
+	// snapshot, and a host silent for 1s is not the same observation as a host
+	// silent for 5s - so without it the index would average measurements taken
+	// at different sensitivities and call the result a rate.
+	//
+	// It is also the only parameter that is a fact about us rather than about
+	// the customer. The target specification is a fact about their network and
+	// has no field here, by construction: see
+	// TestSnapshotHasNoFieldForTheScopeOrTheTargetList.
+	ProbeTimeout      string         `json:"probe_timeout,omitempty"`
 	HostsWithFindings int            `json:"hosts_with_findings"`
 	Grade             domain.Grade   `json:"grade"`
 	Score             int            `json:"score"`
@@ -67,7 +78,9 @@ const notice = "Anonymized aggregate metadata only. Host identifiers are salted 
 	"single-use random salt and cannot be reversed or correlated across snapshots. " +
 	"Contains no hostnames, IPs, finding details, credentials, or any customer content. " +
 	"The engagement label (-label) and the scanning host are omitted by construction, " +
-	"not stripped: Snapshot has no field for either."
+	"not stripped: Snapshot has no field for either, nor for the scope that was scanned " +
+	"(-cidr, -targets, -targets-file). The probe timeout is recorded because an aggregate " +
+	"exposure rate is not comparable across snapshots measured at different timeouts."
 
 // Build reduces a scan result to anonymized metadata. A fresh random salt is
 // generated per snapshot, so host identifiers are stable within one file and
@@ -109,9 +122,20 @@ func Build(r domain.ScanResult, now time.Time) (Snapshot, error) {
 		Grade:             r.Grade,
 		Score:             r.Score,
 		SeverityCounts:    counts,
+		ProbeTimeout:      probeTimeout(r),
 		Findings:          records,
 		Notice:            notice,
 	}, nil
+}
+
+// probeTimeout reads only the timeout out of the scan parameters. Taking the
+// whole ScanParams struct would be the easy mistake: it carries the CIDR
+// blocks and the -targets-file path.
+func probeTimeout(r domain.ScanResult) string {
+	if r.Params == nil {
+		return ""
+	}
+	return r.Params.ProbeTimeout
 }
 
 func hashHost(salt []byte, host string) string {

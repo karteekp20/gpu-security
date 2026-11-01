@@ -217,6 +217,61 @@ const TierL1 = "L1"
 // to the attested tiers.
 const L1CleanScore = 94
 
+// ScanParams records the settings that decide what a result means, so a report
+// can be reproduced from itself.
+//
+// This is not provenance trivia. "No response" at `-timeout 1s` and "no
+// response" at 5s are different claims about the same host, and a reader
+// holding only the report cannot tell which one they have - the same defect as
+// a grade reported without its tier, one layer down. A measurement stated
+// without the setting that produced it invites the reader to assume the
+// stronger reading.
+//
+// It carries the target specification, which is a fact about the customer's
+// network (a /16 says how their estate is laid out) and can name the customer
+// outright through a -targets-file path under ~/assessments/. So it must never
+// reach the anonymized benchmark snapshot, which is structurally barred from
+// having a field for it exactly as it is for Label and ScannedFrom.
+type ScanParams struct {
+	// ProbeTimeout is -timeout as an operator would retype it ("4s"), not as
+	// nanoseconds: the audience for reproduction is a human with a shell. The
+	// TLS handshake has its own fixed deadline that no flag changes, so there
+	// is nothing to record for it.
+	ProbeTimeout string `json:"probe_timeout"`
+	// Concurrency is what the scan actually ran at. ConcurrencyRequested is
+	// set only when it differs - when this host's open-file limit could not
+	// sustain what was asked (scan.MaxHostConcurrency) - and recording it
+	// matters precisely because a clamped run is deliberately NOT marked
+	// degraded: the clamp exists so the measurement stays correct, which
+	// leaves a stderr notice the report never saw and a scan that took
+	// minutes instead of seconds as its only other trace.
+	Concurrency          int `json:"concurrency"`
+	ConcurrencyRequested int `json:"concurrency_requested,omitempty"`
+	// Ports is every port probed, sorted. A -ports override changes what the
+	// scan could have found at all, so two reports are not comparable without
+	// it, and a reader cannot tell a port that was quiet from one that was
+	// never dialed.
+	Ports []int `json:"ports"`
+	// PortOverrides is the -ports spec verbatim, empty when the defaults ran.
+	// Ports above is what it resolved to; both are kept because the spec is
+	// what gets retyped and the resolved set is what gets audited.
+	PortOverrides string `json:"port_overrides,omitempty"`
+	// CIDR, TargetsFile, NamedTargets and Buckets are how the scope was
+	// expressed. The HTML lists at most ten unassessed targets, so on a dark
+	// /24 the scope is otherwise recoverable only from report.json - and the
+	// HTML is the artifact that gets read.
+	CIDR         []string `json:"cidr,omitempty"`
+	TargetsFile  string   `json:"targets_file,omitempty"`
+	NamedTargets int      `json:"named_targets,omitempty"`
+	Buckets      int      `json:"buckets,omitempty"`
+}
+
+// ConcurrencyWasClamped reports whether the scan ran below what was asked for
+// because the local open-file limit could not sustain it.
+func (p ScanParams) ConcurrencyWasClamped() bool {
+	return p.ConcurrencyRequested > 0 && p.ConcurrencyRequested != p.Concurrency
+}
+
 type ScanResult struct {
 	ScannerVersion string `json:"scanner_version"`
 	// Tier is the assessment tier this result covers, always TierL1 from this
@@ -231,9 +286,14 @@ type ScanResult struct {
 	// twelve didn't answer" means something different when the answer is "you
 	// were on the wrong side of a firewall", and a report read a month later
 	// has no other way to say where it was taken from.
-	ScannedFrom string    `json:"scanned_from,omitempty"`
-	StartedAt   time.Time `json:"started_at"`
-	CompletedAt time.Time `json:"completed_at"`
+	ScannedFrom string `json:"scanned_from,omitempty"`
+	// Params records the settings this result was measured with. A pointer
+	// because absent is a real state rather than a default: a result assembled
+	// from something that was not a scanner run has no parameters to report,
+	// and filling in the flag defaults would be inventing them.
+	Params      *ScanParams `json:"parameters,omitempty"`
+	StartedAt   time.Time   `json:"started_at"`
+	CompletedAt time.Time   `json:"completed_at"`
 	// TargetsRequested is what the operator asked for; TargetsScanned is what
 	// was actually attempted. They differ only when the scan was stopped early,
 	// and the difference is the whole point: "41 of 254 probed" is a different
@@ -312,6 +372,9 @@ type Run struct {
 	Findings    []Finding
 	Interrupted bool
 	ProbeErrors int
+	// Params is what the scan was run with, carried through the one
+	// constructor so a result cannot be built with its settings left behind.
+	Params *ScanParams
 }
 
 // NewScanResult records a run that finished and covered everything it was
@@ -342,6 +405,7 @@ func NewResult(run Run) ScanResult {
 		ProbeErrors:       run.ProbeErrors,
 		HostsWithFindings: len(affected),
 		Findings:          findings, Summary: summary,
+		Params: run.Params,
 	}
 	for _, h := range hosts {
 		if h.Address != "" {

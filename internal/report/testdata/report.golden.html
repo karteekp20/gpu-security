@@ -30,6 +30,7 @@ ol.fix{padding-left:1.2rem}ol.fix li{margin:.55rem 0}
 table{width:100%;border-collapse:collapse;margin-top:.5rem;min-width:36rem}
 th,td{text-align:left;padding:.6rem .5rem;border-bottom:1px solid var(--line);vertical-align:top}
 th{color:var(--muted);font-weight:600;font-size:.85rem}
+table.params{min-width:0}table.params th{width:11rem;white-space:nowrap}
 .sev{font-weight:600;font-size:.8rem;text-transform:uppercase;white-space:nowrap}
 .sev.critical{color:#c0392b}.sev.high{color:#e67e22}.sev.medium{color:#d4a017}.sev.low{color:#3498db}.sev.info{color:var(--muted)}
 .sev::before{content:"\25CF  ";font-size:.9em}
@@ -172,6 +173,15 @@ absence of exposure.</p>
 observes which services are reachable, whether they require authentication, and their transport
 posture. It does not install software, does not require credentials, and cannot assess
 cross-tenant fabric isolation or hardware attestation &mdash; those need deeper tiers.</p>
+
+<table class="params">
+<tr><th>Probe timeout</th><td><code>-timeout 4s</code> &mdash; every port was given this long to answer and no longer, so &ldquo;no response&rdquo; above means &ldquo;silent for 4s&rdquo;.</td></tr>
+<tr><th>Concurrency</th><td><code>-concurrency 32</code></td></tr>
+<tr><th>Ports probed</th><td>8000, 8265, 8888, 11434</td></tr>
+<tr><th>Scope as given</th><td>CIDR 10.0.0.0/29</td></tr>
+</table>
+<p class="foot">Stated so this scan can be reproduced and so two reports can be compared. A
+different timeout or port set is a different measurement, not a better or worse one.</p>
 
 <p class="foot">Read-only assessment. Detection by observation, not exploitation. No customer
 payload &mdash; no model weights, prompts, training data, inference content, or object contents

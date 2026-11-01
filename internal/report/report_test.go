@@ -51,6 +51,17 @@ func fixture() domain.ScanResult {
 	// reads, so they belong in the golden file rather than in a side test.
 	r.Label = "Example Neocloud - cluster A - 2026-09-20"
 	r.ScannedFrom = "assessor-laptop"
+	// The parameters are part of the same artifact and for the same reason:
+	// "no response" is only interpretable alongside how long a host was given
+	// to answer. The ordinary, unclamped case belongs in the reference report;
+	// the clamped disclosure has its own test so the golden does not present
+	// a constrained machine as typical.
+	r.Params = &domain.ScanParams{
+		ProbeTimeout: "4s",
+		Concurrency:  32,
+		Ports:        []int{8000, 8265, 8888, 11434},
+		CIDR:         []string{"10.0.0.0/29"},
+	}
 	return r
 }
 
@@ -511,5 +522,83 @@ func TestTheNarrativeDoesNotAssertTheVersionGatedCVE(t *testing.T) {
 			t.Errorf("the narrative does not mention %q, so the reader cannot tell why "+
 				"we decline to assert it", want)
 		}
+	}
+}
+
+// TestReportStatesTheTimeoutItMeasuredWith. The report's own coverage section
+// says targets gave "no response". That is a claim about a duration, and
+// without the duration a reader cannot tell a firewalled host from one that
+// was 200ms slower than a 1s timeout - nor compare this report with the next
+// one. G5's acceptance criterion is that a reader can reproduce the scan from
+// the report alone.
+func TestReportStatesTheTimeoutItMeasuredWith(t *testing.T) {
+	html := renderFixtureHTML(t)
+
+	for _, want := range []string{
+		"-timeout 4s",
+		"-concurrency 32",
+		"8000, 8265, 8888, 11434",
+		"10.0.0.0/29",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("the report does not state %q, so the scan cannot be reproduced from it", want)
+		}
+	}
+
+	// The timeout has to be stated as what it means, not only as a flag: a
+	// number in a parameter table is provenance, while "silent for 4s" is the
+	// qualifier on every no-response line above it.
+	if !strings.Contains(html, "silent for 4s") {
+		t.Error("the report prints the timeout without saying what it means for the " +
+			"no-response rows it qualifies")
+	}
+}
+
+// TestClampedConcurrencyIsDisclosedInTheReport. The scanner clamps
+// concurrency to what the local open-file limit sustains, and deliberately
+// does NOT mark such a run degraded, because the clamp is what keeps the
+// measurement correct. The cost of that choice is that the artifact has no
+// other trace of it: a scan that took four minutes instead of seventeen
+// seconds reads as the operator's own setting. This is the disclosure.
+func TestClampedConcurrencyIsDisclosedInTheReport(t *testing.T) {
+	r := fixture()
+	r.Params = &domain.ScanParams{
+		ProbeTimeout: "4s", Concurrency: 8, ConcurrencyRequested: 64,
+		Ports: []int{8265},
+	}
+	var buf bytes.Buffer
+	if err := RenderHTML(&buf, r); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	html := buf.String()
+
+	if !strings.Contains(html, "-concurrency 8") {
+		t.Error("the report does not state the concurrency the scan actually ran at")
+	}
+	if !strings.Contains(html, "reduced from the 64 requested") {
+		t.Error("the report states the clamped value without saying it was clamped; " +
+			"a constrained machine then reads as a deliberate choice")
+	}
+	// And it must not read as a coverage problem, because it is not one.
+	if !strings.Contains(html, "Coverage and findings are unaffected") {
+		t.Error("the clamp disclosure does not say what it did and did not affect; an " +
+			"unqualified notice invites the reader to discount the whole scan")
+	}
+}
+
+// TestReportRendersWithoutParameters. Params is a pointer because absent is a
+// real state: a result assembled from something that was not a scanner run has
+// no flags to report, and the template must not invent defaults or fail.
+func TestReportRendersWithoutParameters(t *testing.T) {
+	r := cleanFixture()
+	if r.Params != nil {
+		t.Fatal("cleanFixture now carries parameters; this test no longer covers the nil case")
+	}
+	var buf bytes.Buffer
+	if err := RenderHTML(&buf, r); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if strings.Contains(buf.String(), "-timeout") {
+		t.Error("the report printed a timeout for a result that never recorded one")
 	}
 }

@@ -6,7 +6,7 @@ re-deriving context. It is the *live backlog*. It is **not** a source of truth:
 outrank anything written here. If this file and a decision row disagree, the
 decision row wins and this file is wrong.
 
-**Last updated:** 2026-11-01 · **`main` at the time:** `8c76340` (+ this PR: G6)
+**Last updated:** 2026-11-02 · **`main` at the time:** `2329cd0` (+ this PR: G5)
 
 ---
 
@@ -52,6 +52,7 @@ review; C-items are chart work; D-items are decisions to record.**
 
 | # | Item | Where |
 | :-- | :-- | :-- |
+| G5 | **The report records the settings it was measured with.** `parameters` in the JSON (`probe_timeout`, `concurrency`, resolved `ports`, `cidr`/`targets_file`/`named_targets`/`buckets`) and a table under **Scope & method** in the HTML. The clamped-concurrency case is disclosed rather than silent — measured under `prlimit --nofile=128:128`, where `-concurrency 64` ran at 2 and the report previously said nothing. The target specification is barred from the benchmark snapshot by value and structurally; only the timeout travels, because an aggregate exposure rate is not comparable across different timeouts | `domain.ScanParams`; `clampConcurrency` + `probedPorts` in `cmd/ray-guard/main.go`; `portsProbed`/`scopeGiven` in `internal/report/report.go`; decision row 2026-11-02 |
 | G4 | Ray identified by `/api/version`, not `/`; report separates observation from consequence; the "remote code execution" sentence is keyed to `codeExecutionRules` rather than to severity | PR #4, `8b32710`. Also eliminated a **false Critical**: a plain web server on 8265 answers 200 on `/` and 404 on the wildcard control, so it was graded **F / critical RG-RAY-001** and is now **A / Info** |
 | G1 | **Four** titles no longer claim internet exposure (`RG-TRITON-002`, `RG-TORCHSERVE-002`, `RG-DCGM-001`, and `RG-BUCKET-001`, which the review did not name but had the same defect). Both Go and Rego sides, with a note in `detect.go` so the reason survives the next person who wants a punchier title. Verified by mutation: drifting one Rego title fails `TestGoAndRegoRuleSetsAgree` | PR #5 |
 | G7 | The report prints a "How this grade was reached" table: first-match-wins rows from `gradeFor`, plus the ordering point — an observed finding stands even on an unfinished scan, but an unfinished scan can never earn a clean grade. HTML only; the matrix is static documentation, not data about a particular scan, so it is not duplicated into every JSON | PR #5 |
@@ -60,13 +61,10 @@ review; C-items are chart work; D-items are decisions to record.**
 | G6 | **CVE claims are split into asserted and unconfirmed.** `cves` now holds only CVEs whose condition is the condition we observed; a CVE whose advisory names a fixed version moves to `cves_unconfirmed` with that version and the check that settles it. `RG-TORCHSERVE-001` asserts none. Found a real false claim on the way: the demo stack asserted `CVE-2023-43654` against TorchServe **0.12.0**, which NVD records as fixed in **0.8.2**. The Ray pair was true only by luck - 2.9.0 is below 2.52.0, but the scanner never read the version. Grade unchanged (`F`, 40, 21 findings), which is the test that severity never rested on the CVE | This PR |
 | G8 | §3 now reads "Agentless, read-only **active** probe … (one benign GET per check plus a wildcard control; nothing is installed and no credentials are used)" | PR #5 |
 
-### Open — no decision needed, safe to start
-
-| # | Item | Anchors | Acceptance criterion |
-| :-- | :-- | :-- | :-- |
-| **G5** | The report cannot be reproduced from itself. `-ports`, `-cidr`, `-timeout`, `-concurrency` are absent. A host recorded `no-response` at `-timeout 1s` is a different claim from the same host at 5s, and the reader cannot tell which they hold | `domain.Run` / `ScanResult` at `internal/domain/types.go:214`; flags in `cmd/ray-guard/main.go` | A reader can reproduce the scan from the report alone. Already present and **not** to be re-added: `scanned_from`, duration, coverage counts, `probe_errors`, probe-failed vs filtered |
-
 ### Open — larger, and worth doing in this order
+
+The short, self-contained items are all done. Everything below needs either a
+decision or more than one sitting, so read the note before starting one.
 
 | # | Item | Notes |
 | :-- | :-- | :-- |

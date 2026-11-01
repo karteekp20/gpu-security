@@ -14,6 +14,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -51,6 +52,11 @@ type view struct {
 	HasRayFinding    bool
 	UnreachableShown []domain.HostSummary
 	UnreachableExtra int
+	// PortsProbed and ScopeGiven render ScanParams for a human. They are
+	// precomputed rather than assembled in the template because both are
+	// prose with plurals and both are asserted directly in tests.
+	PortsProbed string
+	ScopeGiven  string
 }
 
 func newView(r domain.ScanResult) view {
@@ -105,7 +111,54 @@ func newView(r domain.ScanResult) view {
 		HasRayFinding:    hasRay,
 		UnreachableShown: shown,
 		UnreachableExtra: extra,
+		PortsProbed:      portsProbed(r.Params),
+		ScopeGiven:       scopeGiven(r.Params),
 	}
+}
+
+// portsProbed lists the ports dialed on every host. An operator checks this
+// against the authorization they signed, which named ports.
+func portsProbed(p *domain.ScanParams) string {
+	if p == nil || len(p.Ports) == 0 {
+		return ""
+	}
+	out := make([]string, 0, len(p.Ports))
+	for _, port := range p.Ports {
+		out = append(out, strconv.Itoa(port))
+	}
+	return strings.Join(out, ", ")
+}
+
+// scopeGiven states the scope the way it was typed, which is what the reader
+// needs to retype it. The resolved target list is in report.json; the HTML
+// caps the unassessed list at maxUnreachableListed, so on a dark /24 this
+// sentence is the only place the HTML says what was in scope at all.
+func scopeGiven(p *domain.ScanParams) string {
+	if p == nil {
+		return ""
+	}
+	var parts []string
+	if len(p.CIDR) > 0 {
+		parts = append(parts, "CIDR "+strings.Join(p.CIDR, ", "))
+	}
+	if p.NamedTargets > 0 {
+		parts = append(parts, fmt.Sprintf("%s named on the command line",
+			plural(p.NamedTargets, "host", "hosts")))
+	}
+	if p.TargetsFile != "" {
+		parts = append(parts, "a target list at "+p.TargetsFile)
+	}
+	if p.Buckets > 0 {
+		parts = append(parts, plural(p.Buckets, "bucket URL", "bucket URLs"))
+	}
+	return strings.Join(parts, "; ")
+}
+
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return fmt.Sprintf("%d %s", n, one)
+	}
+	return fmt.Sprintf("%d %s", n, many)
 }
 
 // Scan output is owner-only. A report lists exactly which of a client's
@@ -306,6 +359,7 @@ ol.fix{padding-left:1.2rem}ol.fix li{margin:.55rem 0}
 table{width:100%;border-collapse:collapse;margin-top:.5rem;min-width:36rem}
 th,td{text-align:left;padding:.6rem .5rem;border-bottom:1px solid var(--line);vertical-align:top}
 th{color:var(--muted);font-weight:600;font-size:.85rem}
+table.params{min-width:0}table.params th{width:11rem;white-space:nowrap}
 .sev{font-weight:600;font-size:.8rem;text-transform:uppercase;white-space:nowrap}
 .sev.critical{color:#c0392b}.sev.high{color:#e67e22}.sev.medium{color:#d4a017}.sev.low{color:#3498db}.sev.info{color:var(--muted)}
 .sev::before{content:"\25CF  ";font-size:.9em}
@@ -465,7 +519,16 @@ absence of exposure.</p>
 observes which services are reachable, whether they require authentication, and their transport
 posture. It does not install software, does not require credentials, and cannot assess
 cross-tenant fabric isolation or hardware attestation &mdash; those need deeper tiers.</p>
-
+{{with .Params}}
+<table class="params">
+<tr><th>Probe timeout</th><td><code>-timeout {{.ProbeTimeout}}</code> &mdash; every port was given this long to answer and no longer, so &ldquo;no response&rdquo; above means &ldquo;silent for {{.ProbeTimeout}}&rdquo;.</td></tr>
+<tr><th>Concurrency</th><td><code>-concurrency {{.Concurrency}}</code>{{if .ConcurrencyWasClamped}} &mdash; reduced from the {{.ConcurrencyRequested}} requested, because the open-file limit on the scanning machine could not sustain that many hosts at once. Coverage and findings are unaffected; the scan simply took longer.{{end}}</td></tr>
+<tr><th>Ports probed</th><td>{{$.PortsProbed}}{{if .PortOverrides}} &mdash; overridden with <code>-ports {{.PortOverrides}}</code>{{end}}</td></tr>
+{{if $.ScopeGiven}}<tr><th>Scope as given</th><td>{{$.ScopeGiven}}</td></tr>{{end}}
+</table>
+<p class="foot">Stated so this scan can be reproduced and so two reports can be compared. A
+different timeout or port set is a different measurement, not a better or worse one.</p>
+{{end}}
 <p class="foot">Read-only assessment. Detection by observation, not exploitation. No customer
 payload &mdash; no model weights, prompts, training data, inference content, or object contents
 &mdash; was read, stored, or transmitted. Grade thresholds are provisional and will be revised as they are validated.</p>

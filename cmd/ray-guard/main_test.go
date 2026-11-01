@@ -240,3 +240,97 @@ func TestLoadTargetsAcceptsAnOrdinaryList(t *testing.T) {
 		}
 	}
 }
+
+// TestClampedConcurrencyReportsWhatWasAskedFor is the test that stops a
+// clamped scan from reading as a deliberate choice.
+//
+// A clamped run is NOT marked degraded, by design: the clamp exists so the
+// measurement stays correct rather than failing (2026-10-24). That design has
+// a cost - the only trace left in the artifact is a scan that took minutes
+// instead of seconds - and the fix is to record both numbers. The failure this
+// guards is losing the second one, which is what the previous shape invited by
+// mutating the flag in place.
+func TestClampedConcurrencyReportsWhatWasAskedFor(t *testing.T) {
+	var notice strings.Builder
+	effective, asked := clampConcurrency(64, 8, &notice)
+
+	if effective != 8 {
+		t.Errorf("effective = %d, want 8: the scan must run at what the host sustains", effective)
+	}
+	if asked != 64 {
+		t.Errorf("asked = %d, want 64: without this the report cannot say the machine was "+
+			"the constraint, and a 4-minute scan reads as the operator's own choice", asked)
+	}
+	if !strings.Contains(notice.String(), "ulimit -Hn") {
+		t.Errorf("notice does not name the fix:\n%s", notice.String())
+	}
+
+	p := domain.ScanParams{Concurrency: effective, ConcurrencyRequested: asked}
+	if !p.ConcurrencyWasClamped() {
+		t.Error("ConcurrencyWasClamped is false for a clamped run; the report will not disclose it")
+	}
+}
+
+// TestUnclampedConcurrencyRecordsNoSecondNumber. The two values differing is
+// the signal, so they must be equal whenever nothing bound the scan - both
+// when the limit allows what was asked and when the limit is unknown. A
+// "requested" value that is always present means nothing.
+func TestUnclampedConcurrencyRecordsNoSecondNumber(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		requested, max int
+	}{
+		{"within the limit", 32, 1024},
+		{"exactly at the limit", 32, 32},
+		{"limit unknown", 32, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var notice strings.Builder
+			effective, asked := clampConcurrency(tc.requested, tc.max, &notice)
+			if effective != tc.requested || asked != tc.requested {
+				t.Errorf("got (%d, %d), want (%d, %d)", effective, asked, tc.requested, tc.requested)
+			}
+			if notice.Len() != 0 {
+				t.Errorf("warned about a scan nothing constrained:\n%s", notice.String())
+			}
+			p := domain.ScanParams{Concurrency: effective}
+			if p.ConcurrencyWasClamped() {
+				t.Error("ConcurrencyWasClamped is true for an unconstrained run")
+			}
+		})
+	}
+}
+
+// TestProbedPortsIsTheResolvedSet. The report states the ports actually
+// dialed, which is what an operator checks against the authorization they
+// signed. Two checks on one port must appear once, and the order must be
+// stable or two reports of the same scan will not compare.
+func TestProbedPortsIsTheResolvedSet(t *testing.T) {
+	got := probedPorts([]scan.Check{
+		{Port: 8888}, {Port: 8265}, {Port: 8000}, {Port: 8000}, {Port: 11434},
+	})
+	want := []int{8000, 8265, 8888, 11434}
+	if len(got) != len(want) {
+		t.Fatalf("probedPorts = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("probedPorts = %v, want %v (sorted, deduplicated)", got, want)
+		}
+	}
+
+	// And the default table, so the report never claims a port it does not dial.
+	defaults := probedPorts(scan.DefaultChecks())
+	seen := map[int]bool{}
+	for _, p := range defaults {
+		if seen[p] {
+			t.Errorf("port %d listed twice", p)
+		}
+		seen[p] = true
+	}
+	for _, c := range scan.DefaultChecks() {
+		if !seen[c.Port] {
+			t.Errorf("port %d is dialed by DefaultChecks but absent from the report's port list", c.Port)
+		}
+	}
+}
