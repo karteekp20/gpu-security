@@ -57,6 +57,12 @@ type view struct {
 	// prose with plurals and both are asserted directly in tests.
 	PortsProbed string
 	ScopeGiven  string
+	// The coverage bar. Segments drive both the chart and its presence - an
+	// empty slice means there was nothing to draw and the section is skipped.
+	CoverageSegments []coverageSegment
+	CoverageSentence string
+	CoverageNote     string
+	CoverageBar      template.HTML
 }
 
 func newView(r domain.ScanResult) view {
@@ -94,6 +100,8 @@ func newView(r domain.ScanResult) view {
 		}
 	}
 
+	segs := coverageSegments(r)
+
 	shown := r.Unreachable
 	extra := 0
 	if len(shown) > maxUnreachableListed {
@@ -113,6 +121,10 @@ func newView(r domain.ScanResult) view {
 		UnreachableExtra: extra,
 		PortsProbed:      portsProbed(r.Params),
 		ScopeGiven:       scopeGiven(r.Params),
+		CoverageSegments: segs,
+		CoverageSentence: coverageSentence(r, segs),
+		CoverageNote:     coverageNote(r),
+		CoverageBar:      coverageBarSVG(segs),
 	}
 }
 
@@ -360,6 +372,17 @@ table{width:100%;border-collapse:collapse;margin-top:.5rem;min-width:36rem}
 th,td{text-align:left;padding:.6rem .5rem;border-bottom:1px solid var(--line);vertical-align:top}
 th{color:var(--muted);font-weight:600;font-size:.85rem}
 table.params{min-width:0}table.params th{width:11rem;white-space:nowrap}
+.covbar{display:block;width:100%;max-width:600px;height:auto;margin:.8rem 0 .4rem}
+.covbar rect{stroke:var(--line);stroke-width:1}
+.covbar .seg-ok{fill:#2e7d32}
+.covbar .seg-silent{fill:url(#cov-hatch)}
+.covbar .seg-unresolved{fill:url(#cov-vert)}
+.covbar .seg-failed{fill:url(#cov-horz)}
+.covbar .seg-notprobed{fill:none;stroke-dasharray:3 2}
+.covbar .covink{stroke:var(--muted)}
+.covbar text{font:11px -apple-system,Segoe UI,Roboto,sans-serif;fill:var(--fg)}
+.covbar .covnum{font-weight:600;text-anchor:end}
+.covbar .covlab{fill:var(--muted)}
 .sev{font-weight:600;font-size:.8rem;text-transform:uppercase;white-space:nowrap}
 .sev.critical{color:#c0392b}.sev.high{color:#e67e22}.sev.medium{color:#d4a017}.sev.low{color:#3498db}.sev.info{color:var(--muted)}
 .sev::before{content:"\25CF  ";font-size:.9em}
@@ -435,6 +458,13 @@ address per name was probed, so the result below describes that machine and not 
 <p>To cover them all, pass the addresses themselves as targets. This also keeps the report
 traceable: a finding against a name cannot be re-checked without knowing which machine answered.</p>
 </div>
+{{end}}
+
+{{if .CoverageSegments}}
+<h2>Coverage</h2>
+<p class="facts">{{.CoverageSentence}}</p>
+{{.CoverageBar}}
+<p class="facts">{{.CoverageNote}}</p>
 {{end}}
 
 {{if .FixFirst}}

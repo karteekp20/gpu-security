@@ -223,7 +223,11 @@ and a count of findings by severity.
 **The most misread part of the report, so read it first.**
 
 If the scan asked 254 addresses and 15 answered, the report says so plainly:
-*"239 targets were not assessed."*
+*"239 targets were not assessed."* It also **draws** it — a single bar split
+into what answered and the several different ways the rest did not. A machine
+or two that we could not assess is drawn wide enough to see rather than
+rounded away, which is deliberate: the small gaps are the ones that get
+missed.
 
 A machine that did not answer is **not** a machine that is secure. It might be
 switched off, firewalled, or simply on the other side of something from where we

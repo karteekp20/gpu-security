@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -124,9 +125,25 @@ func renderString(t *testing.T, r domain.ScanResult) string {
 // an air-gapped workstation. It must not reference anything it does not carry.
 func TestHTMLIsSelfContained(t *testing.T) {
 	html := renderString(t, fixture())
-	for _, pattern := range []string{`src=`, `href=`, `@import`, `url(`} {
+	for _, pattern := range []string{`src=`, `href=`, `@import`} {
 		if strings.Contains(html, pattern) {
 			t.Errorf("report references an external asset via %q", pattern)
+		}
+	}
+	// `url(` was a flat ban until the coverage bar needed `fill:url(#cov-hatch)`
+	// to reference a pattern defined in the same document. The gate is kept
+	// rather than dropped, narrowed to its actual intent: a fragment
+	// reference resolves inside this file, anything else leaves it. Written as
+	// "every url( is followed by #" so a future `url(https://fonts...)` still
+	// fails, which a weakened substring check would have waved through.
+	for i := 0; ; {
+		j := strings.Index(html[i:], "url(")
+		if j < 0 {
+			break
+		}
+		i += j + len("url(")
+		if i >= len(html) || html[i] != '#' {
+			t.Errorf("report references an external asset via url(%.40s", html[i:])
 		}
 	}
 }
@@ -600,5 +617,245 @@ func TestReportRendersWithoutParameters(t *testing.T) {
 	}
 	if strings.Contains(buf.String(), "-timeout") {
 		t.Error("the report printed a timeout for a result that never recorded one")
+	}
+}
+
+// The coverage bar is the only chart on the report. Its job is to make the
+// number a reader skips impossible to skip: how much of what they asked for
+// was actually looked at.
+func TestCoverageBarShowsEveryStateATargetEndedIn(t *testing.T) {
+	start := time.Date(2026, 9, 20, 14, 0, 0, 0, time.UTC)
+	hosts := respondedHosts("10.0.0.5", "10.0.0.6")
+	hosts = append(hosts,
+		domain.HostSummary{Host: "10.0.0.7", State: domain.HostNoResponse},
+		domain.HostSummary{Host: "10.0.0.8", State: domain.HostNoResponse},
+		domain.HostSummary{Host: "10.0.0.9", State: domain.HostNoResponse},
+		domain.HostSummary{Host: "ray.example.internal", State: domain.HostUnresolved},
+		domain.HostSummary{Host: "10.0.0.11", State: domain.HostProbeFailed},
+	)
+	r := domain.NewResult(domain.Run{
+		Start: start, End: start.Add(8 * time.Second),
+		Requested: 10, Hosts: hosts, Interrupted: true, ProbeErrors: 1,
+	})
+	html := renderString(t, r)
+
+	// Every count the bar encodes must also be readable as text: the chart is
+	// never the only place a coverage fact appears (section 7.6, and the
+	// report prints to greyscale).
+	want := "10 targets requested: 2 responded, 3 no response, 1 unresolved, " +
+		"1 probe failed, 3 not probed."
+	if !strings.Contains(html, want) {
+		t.Errorf("coverage sentence missing or wrong; want %q", want)
+	}
+	for _, class := range []string{"seg-ok", "seg-silent", "seg-unresolved", "seg-failed", "seg-notprobed"} {
+		// `class="..."` rather than the bare name, because the stylesheet
+		// carries a rule for every state whether or not it is drawn. Twice
+		// each in the markup: once in the bar, once in the legend swatch.
+		if n := strings.Count(html, `class="`+class+`"`); n != 2 {
+			t.Errorf("segment %q appears %d time(s) in the markup, want 2 (bar + legend)", class, n)
+		}
+	}
+	// This run was stopped, so the note must say the unreached targets were
+	// never looked at - not that they "stayed silent", which is a claim about
+	// them rather than about us.
+	if !strings.Contains(html, "never reached were not assessed at all") {
+		t.Error("an interrupted scan's coverage note must say the rest were never probed")
+	}
+}
+
+// The ordinary partial case: the scan finished, and some hosts said nothing.
+// This is the sentence the whole chart exists for.
+func TestSilentHostsAreNotReportedAsCoverage(t *testing.T) {
+	hosts := []domain.HostSummary{{Host: "10.0.0.5", State: domain.HostResponded}}
+	for i := 6; i <= 9; i++ {
+		hosts = append(hosts, domain.HostSummary{
+			Host: "10.0.0." + strconv.Itoa(i), State: domain.HostNoResponse})
+	}
+	html := renderString(t, domain.NewResult(domain.Run{
+		Requested: len(hosts), Hosts: hosts,
+	}))
+	if !strings.Contains(html, "5 targets requested: 1 responded, 4 no response.") {
+		t.Error("the coverage sentence should state both counts")
+	}
+	if !strings.Contains(html, "missing information rather than a clean result") {
+		t.Error("a scan with silent hosts must say the gap is not a pass")
+	}
+}
+
+// A name resolving to several addresses is a coverage gap in a different unit
+// from the bar's. Both names answered here, so the bar is a full green block -
+// on a run graded N/A for exactly the coverage the bar cannot show. The note
+// has to carry that, or the chart contradicts the grade beside it.
+func TestFullTargetCoverageIsQualifiedWhenAddressesWereNotAssessed(t *testing.T) {
+	r := multiAddressFixture()
+	if r.AddressesUnassessed == 0 {
+		t.Fatal("fixture no longer has unassessed addresses")
+	}
+	html := renderString(t, r)
+	if strings.Contains(html, "the grade above covers all of them") {
+		t.Error("a run with unassessed addresses must not claim the grade covers everything")
+	}
+	if !strings.Contains(html, "counts the targets you named, not the machines behind them") {
+		t.Error("the coverage note must say what unit the bar is in")
+	}
+	if !strings.Contains(html, "behind those names were not assessed") {
+		t.Error("the coverage note must state the unassessed addresses")
+	}
+}
+
+// The three "not assessed" states are distinguished by texture as well as by
+// fill. The report prints, and it prints to greyscale, where three fills that
+// differ only in lightness are one indistinguishable grey band.
+func TestCoverageStatesAreNotDistinguishedByColourAlone(t *testing.T) {
+	html := renderString(t, domain.NewResult(domain.Run{
+		Requested: 4,
+		Hosts: []domain.HostSummary{
+			{Host: "10.0.0.5", State: domain.HostResponded},
+			{Host: "10.0.0.6", State: domain.HostNoResponse},
+			{Host: "ray.example.internal", State: domain.HostUnresolved},
+			{Host: "10.0.0.8", State: domain.HostProbeFailed},
+		},
+		ProbeErrors: 1,
+	}))
+	for _, id := range []string{"cov-hatch", "cov-vert", "cov-horz"} {
+		// Defined once in <defs>, referenced once from the stylesheet.
+		if n := strings.Count(html, id); n != 2 {
+			t.Errorf("pattern %q appears %d time(s), want 2 (definition + reference)", id, n)
+		}
+	}
+}
+
+// A single probe-failed host in a /24 is 0.39% of the bar - two tenths of a
+// user unit, which rounds to nothing. A coverage gap that renders as invisible
+// is the defect this chart exists to prevent, so a present state is always
+// drawn wide enough to see.
+func TestASingleUnassessedHostIsStillVisibleOnTheBar(t *testing.T) {
+	hosts := make([]domain.HostSummary, 0, 254)
+	for i := 1; i <= 253; i++ {
+		hosts = append(hosts, domain.HostSummary{
+			Host: "10.0.0." + strconv.Itoa(i), State: domain.HostResponded})
+	}
+	hosts = append(hosts, domain.HostSummary{Host: "10.0.0.254", State: domain.HostProbeFailed})
+
+	segs := coverageSegments(domain.NewResult(domain.Run{
+		Requested: len(hosts), Hosts: hosts, ProbeErrors: 1,
+	}))
+	if len(segs) != 2 {
+		t.Fatalf("expected responded + probe-failed, got %v", segs)
+	}
+
+	svg := string(coverageBarSVG(segs))
+	m := regexp.MustCompile(`class="seg-failed" x="([0-9.]+)" y="0" width="([0-9.]+)"`).FindStringSubmatch(svg)
+	if m == nil {
+		t.Fatalf("no probe-failed segment in the bar: %s", svg)
+	}
+	w, err := strconv.ParseFloat(m[2], 64)
+	if err != nil {
+		t.Fatalf("parsing width %q: %v", m[2], err)
+	}
+	if w < minSegment {
+		t.Errorf("1-of-254 segment rendered %v units wide, below the %d-unit floor", w, minSegment)
+	}
+	// The floor must not be bought by letting the bar overflow or underflow:
+	// the last segment ends exactly at the right edge.
+	x, err := strconv.ParseFloat(m[1], 64)
+	if err != nil {
+		t.Fatalf("parsing x %q: %v", m[1], err)
+	}
+	if got := x + w; got != float64(barWidth) {
+		t.Errorf("bar ends at %v, want exactly %d", got, barWidth)
+	}
+}
+
+// Full coverage is a claim worth printing. The section renders on every report
+// so that a reader comparing two of them finds it in the same place, rather
+// than learning that its absence was the good news.
+func TestFullCoverageIsStatedPositively(t *testing.T) {
+	html := renderString(t, cleanFixture())
+	if !strings.Contains(html, "4 targets requested: 4 responded.") {
+		t.Error("a fully covered scan should still state its coverage")
+	}
+	if !strings.Contains(html, "Every target in scope answered") {
+		t.Error("full coverage should be stated as a positive claim")
+	}
+	for _, absent := range []string{"seg-silent", "seg-notprobed"} {
+		if strings.Contains(html, `class="`+absent+`"`) {
+			t.Errorf("state %q has no targets and should not be drawn", absent)
+		}
+	}
+}
+
+// A scan that reached nothing is the case the chart must not flatter: a full
+// bar of "no response" alongside an N/A grade, said plainly.
+func TestAnUnreachedScanDoesNotReadAsCoverage(t *testing.T) {
+	start := time.Date(2026, 9, 20, 14, 0, 0, 0, time.UTC)
+	hosts := []domain.HostSummary{
+		{Host: "10.0.0.5", State: domain.HostNoResponse},
+		{Host: "10.0.0.6", State: domain.HostNoResponse},
+	}
+	html := renderString(t, domain.NewResult(domain.Run{
+		Start: start, End: start.Add(4 * time.Second), Requested: 2, Hosts: hosts,
+	}))
+	if !strings.Contains(html, "2 targets requested: 2 no response.") {
+		t.Error("an unreached scan should state that nothing answered")
+	}
+	if !strings.Contains(html, "it records that we did not see them") {
+		t.Error("an unreached scan's coverage note must deny it is a verdict")
+	}
+	if strings.Contains(html, `class="seg-ok"`) {
+		t.Error("nothing responded, so there is no responded segment to draw")
+	}
+}
+
+// A result that is not a scanner run - no targets, no hosts - has no coverage
+// to draw, and an empty bar would be a chart asserting something about nothing.
+func TestNoTargetsRendersNoCoverageSection(t *testing.T) {
+	html := renderString(t, domain.NewResult(domain.Run{}))
+	if strings.Contains(html, `class="covbar"`) {
+		t.Error("a run with no targets should render no coverage bar")
+	}
+	if strings.Contains(html, "<h2>Coverage</h2>") {
+		t.Error("the coverage section should be skipped when there is nothing to show")
+	}
+}
+
+// The coverage bar is the one place in the report where we build markup
+// ourselves and hand it to the template already trusted (template.HTML). That
+// is safe only because nothing from the scan reaches it - the chart is a
+// picture of counts. This test holds that premise down rather than leaving it
+// to the comment beside the conversion, because the failure mode is a future
+// change that adds a host name to a legend row and silently makes the
+// annotation false.
+func TestTheCoverageBarCarriesNoScannedInput(t *testing.T) {
+	hostile := `<script>alert(1)</script>`
+	r := domain.NewResult(domain.Run{
+		Requested: 3,
+		Hosts: []domain.HostSummary{
+			{Host: hostile, State: domain.HostResponded},
+			{Host: hostile + "-2", State: domain.HostNoResponse},
+			{Host: hostile + "-3", State: domain.HostUnresolved},
+		},
+		Params: &domain.ScanParams{
+			ProbeTimeout: hostile, Concurrency: 1,
+			TargetsFile: hostile, CIDR: []string{hostile},
+		},
+	})
+	r.Label = hostile
+	r.ScannedFrom = hostile
+
+	html := renderString(t, r)
+	start := strings.Index(html, `<svg class="covbar"`)
+	if start < 0 {
+		t.Fatal("no coverage bar in the report")
+	}
+	svg := html[start : start+strings.Index(html[start:], "</svg>")]
+	if strings.Contains(svg, "script") || strings.Contains(svg, hostile) {
+		t.Errorf("scanned input reached the coverage bar: %s", svg)
+	}
+	// And the hostile strings that do belong on the report are escaped by the
+	// template as usual, so this is a statement about the chart, not a claim
+	// that the report drops them.
+	if !strings.Contains(html, "&lt;script&gt;") {
+		t.Error("expected the template to escape scanned input elsewhere on the page")
 	}
 }
