@@ -181,16 +181,21 @@ These are habits that found real defects, not ceremony:
   `report_claims`, `tier_grades`, `release_v0.2.0`, `v020_preflight`,
   `pinned_resolution`). `Demo_V1` is a deliberate snapshot and was kept; it and
   `main` are the only branches left.
-- **`Demo_V1` has gone stale, and the way it is stale is the dangerous way.**
-  Checked 2026-11-05: it sits at `a66fbdb` with **no commits of its own** and is
-  **27 behind `main`**, so it predates the Rego library, the coverage bar, the
-  scan-parameters table, the pinned-resolution fix *and the asserted/unconfirmed
-  CVE split*. Demoing from it would put the **false `CVE-2023-43654` claim
-  against TorchServe 0.12.0 back on screen** — the one an operator refutes with
-  `pip show torchserve`, which is why G6 exists. A snapshot branch that is
-  silently a month behind is worse than no snapshot, because its name says
-  "this is the demo". Either re-cut it from `main` or delete it and demo from
-  the release tag; do not leave it as the thing called `Demo_V1`.
+- **`Demo_V1` was 27 commits stale — re-cut locally 2026-11-05, remote still
+  pending.** It sat at `a66fbdb` with no commits of its own, predating the Rego
+  library, the coverage bar, the scan-parameters table, the pinned-resolution
+  fix *and the asserted/unconfirmed CVE split* — so demoing from it would have
+  put the **false `CVE-2023-43654` claim against TorchServe 0.12.0 back on
+  screen**, the one an operator refutes with `pip show torchserve`, which is
+  why G6 exists. A snapshot branch silently a month behind is worse than no
+  snapshot, because its name says "this is the demo".
+
+  Moved to `main` (`94b78fd`); nothing was lost, since `a66fbdb` is an ancestor
+  of `main`. **`origin/Demo_V1` is still at `a66fbdb`** and needs one
+  `git push --force-with-lease origin Demo_V1` — until then a clone still gets
+  the stale demo. Re-cut it again whenever `main` moves; the underlying problem
+  is that a named snapshot branch drifts silently, so if that keeps happening,
+  delete it and demo from the release tag instead.
 - ~~A `v0.1.0` **draft** release~~ — deleted 2026-10-31. It was never published,
   was superseded by `v0.1.1`, and its 18 assets were signed in the **old
   detached `.sig`/`.pem` format**, which a current cosign cannot verify at all
