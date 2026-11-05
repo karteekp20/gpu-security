@@ -182,6 +182,9 @@ func detectOne(o domain.Observation) []domain.Finding {
 		if o.HTTPStatus > 0 {
 			detail += fmt.Sprintf(" (HTTP %d)", o.HTTPStatus)
 		}
+		// Basis is port_only even when HTTP answered: something responded, but
+		// by definition no probe identified it, so the open port is the whole
+		// evidence (see nonServiceBasis).
 		return one(mkFinding(ruleUnknownExposure, o, detail))
 	}
 
@@ -190,7 +193,10 @@ func detectOne(o domain.Observation) []domain.Finding {
 		return nil
 	}
 
-	// A reachability-only (TCP) check: no HTTP response to reason about.
+	// A reachability-only (TCP) check: no HTTP response to reason about. Only
+	// tcp-scheme checks arrive here - probeOpenPort drops an HTTP observation
+	// that got no response, so a service name never reaches this branch
+	// without the check having been reachability-only by design.
 	if o.HTTPStatus == 0 {
 		return one(mkFinding(r, o, fmt.Sprintf("Port %d is reachable (%s)", o.Port, o.Note)))
 	}
@@ -206,6 +212,10 @@ func detectOne(o domain.Observation) []domain.Finding {
 
 	// Auth is enforced, but credentials cross the wire in plaintext.
 	if (o.HTTPStatus == http.StatusUnauthorized || o.HTTPStatus == http.StatusForbidden) && !o.TLS.Enabled {
+		// Basis is transport, not the service's own path: what was observed is
+		// the absence of TLS under a service that asked for credentials. The
+		// 401 also means this service was never identified by a 2xx on its own
+		// path, so claiming service_api would overstate it twice.
 		return one(mkFinding(ruleTLSPlaintext, o,
 			fmt.Sprintf("%s on port %d requires authentication but is served over plaintext HTTP", o.Service, o.Port)))
 	}
@@ -215,12 +225,109 @@ func detectOne(o domain.Observation) []domain.Finding {
 
 func one(f domain.Finding) []domain.Finding { return []domain.Finding{f} }
 
+// checksByService indexes the built-in probe set so a finding can state the
+// path that produced it. Built from defaultChecks() rather than restated,
+// because a second copy of the path table is a second thing to get wrong.
+var checksByService = func() map[string]Check {
+	m := make(map[string]Check, len(defaultChecks()))
+	for _, c := range defaultChecks() {
+		m[c.Service] = c
+	}
+	return m
+}()
+
+// basisForService derives how strongly a service rule identified its subject
+// from the probe that identified it. It is DERIVED rather than declared per
+// rule on purpose: the basis is a fact about the request we actually sent, so
+// changing a check's path must change the basis with it. A declared constant
+// would keep saying "service_api" after someone pointed the check at "/", and
+// that silent lie is exactly the class of defect this field exists to expose.
+//
+// Rego mirrors these as literals; drift between the two fails
+// TestGoAndRegoAgreeOnEvidenceBasis, so a path change forces the rule file to
+// be updated rather than quietly disagreeing with the report.
+func basisForService(service string) domain.EvidenceBasis {
+	c, ok := checksByService[service]
+	switch {
+	case !ok:
+		// A service rule with no check cannot have identified anything by a
+		// health path. Understating is the right direction to be wrong, and
+		// TestEveryRuleHasAValidEvidenceBasis fails if this is ever reached.
+		return domain.BasisPortOnly
+	case c.Scheme != "http":
+		return domain.BasisPortOnly
+	case pathAgnosticServices[service]:
+		// Keyed to the wildcard-control exemption, not to the "/metrics"
+		// string: these are weaker precisely BECAUSE the control is skipped
+		// for them, which is the same list that decision was recorded on.
+		return domain.BasisMetricsEndpoint
+	case c.Path == "/":
+		return domain.BasisGenericPath
+	default:
+		return domain.BasisServiceAPI
+	}
+}
+
+// nonServiceBasis pins the basis for the five rules that are not identified by
+// a service's health path, so they do not fall through the check-table
+// derivation and silently pick up whatever a same-named check happens to say.
+//
+// RG-BUCKET-001 is service_api because the object store's own list API
+// answered an unauthenticated request - strong evidence, no check-table entry.
+// RG-EXPOSURE-001 is port_only because nothing identified it, which is the
+// finding. The TLS trio is transport: the evidence is the handshake.
+var nonServiceBasis = map[string]domain.EvidenceBasis{
+	"RG-TLS-001":      domain.BasisTransport,
+	"RG-TLS-002":      domain.BasisTransport,
+	"RG-TLS-003":      domain.BasisTransport,
+	"RG-BUCKET-001":   domain.BasisServiceAPI,
+	"RG-EXPOSURE-001": domain.BasisPortOnly,
+}
+
+// serviceForRule inverts the rules map so a basis can be found from a rule ID.
+var serviceForRule = func() map[string]string {
+	m := make(map[string]string, len(rules))
+	for service, r := range rules {
+		m[r.ruleID] = service
+	}
+	return m
+}()
+
+// evidenceBasisForRule is the single source of truth for what a rule's finding
+// rests on. detect stamps every finding with it, and rule_parity_test.go
+// compares the Rego literals against it, so the report and the rule library
+// cannot disagree about evidence the way they once could about severity.
+func evidenceBasisForRule(ruleID string) domain.EvidenceBasis {
+	if b, ok := nonServiceBasis[ruleID]; ok {
+		return b
+	}
+	return basisForService(serviceForRule[ruleID])
+}
+
+// evidenceFor assembles the evidence block. The level is always the L1 ceiling
+// because this binary is an L1 scanner; it is stated rather than omitted so a
+// reader never has to supply their own ceiling (see domain.EvidenceLevel).
+//
+// ProbedPath is read ONLY from the static check table. Nothing an operator
+// typed can reach it - a -buckets URL can carry a customer's bucket name, and
+// a new field is a new route into the P9 snapshot.
+func evidenceFor(basis domain.EvidenceBasis, service string) domain.Evidence {
+	e := domain.Evidence{Level: domain.L1EvidenceCeiling, Basis: basis}
+	switch basis {
+	case domain.BasisServiceAPI, domain.BasisMetricsEndpoint, domain.BasisGenericPath:
+		e.ProbedPath = checksByService[service].Path
+	}
+	return e
+}
+
 func mkFinding(r ruleDef, o domain.Observation, detail string) domain.Finding {
 	return domain.Finding{
 		RuleID: r.ruleID, Title: r.title, Severity: r.severity,
 		Host: o.Host, Port: o.Port, Service: o.Service,
 		Detail: detail, Remediation: r.remediation,
-		CVEs: assertedCVEs(r.cves), UnconfirmedCVEs: unconfirmedCVEs(r.cves),
+		Evidence:        evidenceFor(evidenceBasisForRule(r.ruleID), o.Service),
+		CVEs:            assertedCVEs(r.cves),
+		UnconfirmedCVEs: unconfirmedCVEs(r.cves),
 	}
 }
 

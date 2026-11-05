@@ -35,11 +35,12 @@ type regoRule struct {
 	path     string
 	pkg      string
 	metadata struct {
-		ID        string   `json:"id"`
-		Title     string   `json:"title"`
-		Severity  string   `json:"severity"`
-		CVE       []string `json:"cve"`
-		CVEUnconf []struct {
+		ID            string   `json:"id"`
+		Title         string   `json:"title"`
+		Severity      string   `json:"severity"`
+		EvidenceBasis string   `json:"evidence_basis"`
+		CVE           []string `json:"cve"`
+		CVEUnconf     []struct {
 			ID      string `json:"id"`
 			FixedIn string `json:"fixed_in"`
 			Why     string `json:"why"`
@@ -250,6 +251,18 @@ func TestGoAndRegoRuleSetsAgree(t *testing.T) {
 		if r.metadata.Remediation != g.remediation {
 			t.Errorf("%s remediation differs (a buyer reads this text):\n  go:   %q\n  rego: %q",
 				id, g.remediation, r.metadata.Remediation)
+		}
+		// Evidence basis. Go DERIVES this from the check table, so a probe
+		// path moving (say mlflow from "/" to a real API path) changes the Go
+		// side automatically and lands here as a failure until the rule file
+		// is updated to agree. That is the intended behaviour: the basis is a
+		// claim about the request we send, and the rule library is the
+		// independent second statement of it.
+		if wantBasis := string(evidenceBasisForRule(id)); r.metadata.EvidenceBasis != wantBasis {
+			t.Errorf("%s evidence_basis differs: go %q, rego %q\n"+
+				"  go derives this from the check table (scheme, path, wildcard-control exemption);\n"+
+				"  if a probe path changed, update the rule file to match",
+				id, wantBasis, r.metadata.EvidenceBasis)
 		}
 		gotCVEs := append([]string(nil), r.metadata.CVE...)
 		wantCVEs := assertedCVEs(g.cves)

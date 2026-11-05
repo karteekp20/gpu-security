@@ -36,6 +36,7 @@ finding_metadata := {
 	"id": "RG-TORCHSERVE-002",
 	"title": "TorchServe metrics endpoint reachable without authentication",
 	"severity": "low",
+	"evidence_basis": "metrics_endpoint",
 	"cve": [],
 	"remediation": "Restrict the metrics port (8082) to your monitoring network.",
 	"compliance": ["SOC2:CC6.6", "ISO27001:A.8.20"]

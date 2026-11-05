@@ -49,6 +49,7 @@ finding_metadata := {
 	"id": "RG-TORCHSERVE-001",
 	"title": "Unauthenticated TorchServe management API exposed",
 	"severity": "critical",
+	"evidence_basis": "service_api",
 	"cve": [],
 	"cve_unconfirmed": [{
 		"id": "CVE-2023-43654",

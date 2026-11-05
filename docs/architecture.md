@@ -90,5 +90,40 @@ engineering readiness. When it arrives:
   `/policies`, each rule carrying a verification sentinel (§8).
 - `internal/benchmark` gains a *server-side* aggregator; the client stays
   local-file-only.
+- The three web surfaces (§7.6) arrive with it — see below.
 
 Until the gate clears, none of that gets built.
+
+### The web surfaces
+
+There is **no web UI in this repo, and the Phase-0 report is not one.**
+`report.html` is a file the binary writes and someone opens or mails; nothing
+serves it. Nothing in the tree binds a port — every `http.Server` lives in a
+`_test.go` and listens on port 0 to give the scanner a target.
+
+This is worth stating because CLAUDE.md §7.6 specifies **three** surfaces
+rather than one portal, and a reader who finds only `report.html` here could
+reasonably conclude the frontend is undesigned. It is not; it is unbuilt. The
+three have different audiences and different phases:
+
+| | Surface | Who reads it | Phase |
+|---|---|---|---|
+| A | Operator console | the Neocloud's own security/ops team | 1 (minimal), 2–3 (depth) |
+| B | Public "Verified by [Platform]" trust page | the Neocloud's *enterprise buyers* | 1 — deliberately not later |
+| C | Independent credential verifier | auditors, skeptical buyers | 1 |
+
+B is the surface most often mistaken for an afterthought and is the reason a
+Neocloud signs; C is what makes the credential more than a PDF. Both rest on
+the signed credential (§10), which does not exist, so neither can precede the
+control plane.
+
+Tech is already fixed by §15 — Next.js + Tailwind, REST for CRUD, GraphQL
+*only* for the graph screen, Cytoscape.js/react-force-graph for blast radius —
+and §16 reserves `/web`. Nothing has been committed there.
+
+**Design exploration does exist**, as standalone HTML prototypes kept outside
+this repo alongside the decks. They are design references only, not a starting
+codebase: neither is built on the stack §15 specifies, and both predate
+decisions taken afterwards (tier-scoped grades, the A+ ceiling, the
+asserted/unconfirmed CVE split). Check them against the current report before
+showing them to anyone.

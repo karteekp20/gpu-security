@@ -82,6 +82,39 @@ import (
 var forbiddenFieldNames = []string{
 	"body", "payload", "content", "prompt", "weight", "dataset",
 	"objectkey", "keys", "secret", "token", "credential", "response",
+
+	// Tenant identity, added 2026-11-05 with the D-1 deferral.
+	//
+	// The list above is about customer *content*, and it has a blind spot:
+	// an exposed DCGM exporter's metrics carry GPU model and UUID,
+	// utilisation, and the pod, namespace and container using each device -
+	// a workload inventory of every tenant on the node. That is the single
+	// most sensitive document this scanner can currently reach, and it is
+	// the reason RG-DCGM-001 is rated Medium rather than Low.
+	//
+	// Checked when this was written: `GPUModel`, `GPUUUID`, `Pod`,
+	// `Namespace` and `Utilization` tripped *nothing* above, so the guard
+	// would have waved through exactly the data that makes parsing that body
+	// a decision rather than a task. A parser is deferred until after the
+	// §14 gate (see the dated row), and this exists so the tripwire is in
+	// place first rather than being written by whoever is already mid-change.
+	//
+	// Note "label" is deliberately NOT here: ScanResult.Label is the
+	// operator's engagement label, which legitimately exists and is kept out
+	// of the P9 snapshot by its own guard instead.
+}
+
+// forbiddenIdentityFieldNames are substrings that indicate a field carries
+// TENANT IDENTITY rather than customer content. Kept separate from the list
+// above because the failure means something different and the message has to
+// say so: a pod name is not "content", it is a name for whose workload this
+// is, and the harm is an inventory of a customer's tenants rather than a leak
+// of their data.
+//
+// Added 2026-11-05 with the D-1 deferral. See the comment on that list for
+// what was measured, and the dated decision row for why no parser exists.
+var forbiddenIdentityFieldNames = []string{
+	"pod", "namespace", "uuid", "gpu", "tenant", "workload", "container",
 }
 
 // TestBoundaryTypesCannotCarryPayload walks every type that crosses the
@@ -139,6 +172,14 @@ func assertNoPayloadFields(t *testing.T, rt reflect.Type, path string, seen map[
 		for _, bad := range forbiddenFieldNames {
 			if strings.Contains(lower, bad) {
 				t.Errorf("%s: field name contains %q, which suggests it carries content rather than metadata (P3)", fieldPath, bad)
+			}
+		}
+		for _, bad := range forbiddenIdentityFieldNames {
+			if strings.Contains(lower, bad) {
+				t.Errorf("%s: field name contains %q, which suggests it carries tenant "+
+					"identity - whose workload this is, not whether it is exposed. That is "+
+					"an inventory of a customer's tenants, and no boundary type may hold "+
+					"one (P3; see the 2026-11-05 D-1 row before adding it)", fieldPath, bad)
 			}
 		}
 		assertNoPayloadFields(t, f.Type, fieldPath, seen)

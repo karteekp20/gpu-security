@@ -27,6 +27,7 @@ finding_metadata := {
 	"id": "RG-TRITON-003",
 	"title": "NVIDIA Triton gRPC endpoint reachable",
 	"severity": "medium",
+	"evidence_basis": "port_only",
 	"cve": [],
 	"remediation": "Restrict the Triton gRPC port (8001) to trusted networks; front it with an auth proxy.",
 	"compliance": ["SOC2:CC6.6", "ISO27001:A.8.20"]

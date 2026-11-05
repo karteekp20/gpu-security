@@ -36,6 +36,7 @@ finding_metadata := {
 	"id": "RG-TRITON-001",
 	"title": "Unauthenticated NVIDIA Triton server exposed",
 	"severity": "high",
+	"evidence_basis": "service_api",
 	"cve": [],
 	"remediation": "Restrict Triton HTTP/gRPC endpoints to trusted networks; add an auth proxy.",
 	"compliance": ["SOC2:CC6.1", "SOC2:CC6.6", "ISO27001:A.5.15", "ISO27001:A.8.20"]

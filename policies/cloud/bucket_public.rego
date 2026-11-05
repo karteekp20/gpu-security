@@ -34,6 +34,7 @@ finding_metadata := {
 	"id": "RG-BUCKET-001",
 	"title": "Object storage bucket lists without authentication",
 	"severity": "high",
+	"evidence_basis": "service_api",
 	"cve": [],
 	"remediation": "Remove public-read/list permissions from the bucket and require authenticated access.",
 	"compliance": ["SOC2:CC6.1", "ISO27001:A.5.15", "ISO27001:A.8.3"]

@@ -37,6 +37,7 @@ finding_metadata := {
 	"id": "RG-TLS-001",
 	"title": "TLS certificate fails verification",
 	"severity": "medium",
+	"evidence_basis": "transport",
 	"cve": [],
 	"remediation": "Replace the certificate with one issued by a trusted CA, matching the service hostname and within its validity window.",
 	"compliance": ["SOC2:CC6.7", "ISO27001:A.8.24"]

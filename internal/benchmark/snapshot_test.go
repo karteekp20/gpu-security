@@ -383,3 +383,66 @@ func TestSnapshotOfAResultWithNoParametersIsStillValid(t *testing.T) {
 			"measurement setting that was never used", snap.ProbeTimeout)
 	}
 }
+
+// TestSnapshotCarriesNoRespondedHostIdentity guards the route opened by
+// domain.ScanResult.Responded (2026-11-05). That field exists so the report can
+// name the hosts that answered cleanly, which is the one list on a result made
+// entirely of hostnames that raise no finding - so copying it here would
+// publish a customer's inventory while looking like a coverage improvement,
+// and the existing structural guard does not cover it: it bars fields named
+// for the scope, the target list and the parameters, none of which match
+// "Responded".
+//
+// Both halves, as with the scope guard: by value, and structurally so a future
+// field cannot reintroduce it. HostID stays the one identity in a snapshot,
+// and it is a salted hash.
+func TestSnapshotCarriesNoRespondedHostIdentity(t *testing.T) {
+	start := time.Date(2026, 11, 5, 9, 0, 0, 0, time.UTC)
+	r := domain.NewResult(domain.Run{
+		Start: start, End: start.Add(time.Second),
+		Requested: 3, Hosts: respondedHosts(3),
+	})
+	if len(r.Responded) != 3 {
+		t.Fatalf("Responded = %d hosts, want 3: this test is not exercising the field "+
+			"it was written for", len(r.Responded))
+	}
+
+	snap, err := Build(r, time.Now())
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	b, err := json.Marshal(snap)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	for _, leak := range []string{"gpu-node", "internal.example.com", "responded\":[", "\"host\":"} {
+		if strings.Contains(string(b), leak) {
+			t.Errorf("P9 VIOLATION: the snapshot carries %q; the responded host list "+
+				"must not travel", leak)
+		}
+	}
+
+	// Structural: no field may hold host identity. The counts are fine - they
+	// are what the index is for - so an integer field named for hosts passes
+	// and a list of them does not.
+	rt := reflect.TypeOf(Snapshot{})
+	for i := 0; i < rt.NumField(); i++ {
+		f := rt.Field(i)
+		name := strings.ToLower(f.Name)
+		identityish := strings.Contains(name, "host") ||
+			strings.Contains(name, "responded") ||
+			strings.Contains(name, "unreachable") ||
+			strings.Contains(name, "address")
+		if !identityish {
+			continue
+		}
+		switch f.Type.Kind() {
+		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+			reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+			// A count. This is the whole point of the index.
+		default:
+			t.Errorf("Snapshot.%s is %s, not a count: a snapshot may carry how many "+
+				"hosts did something, never which ones", f.Name, f.Type)
+		}
+	}
+}

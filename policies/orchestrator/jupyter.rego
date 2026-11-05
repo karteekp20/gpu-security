@@ -36,6 +36,7 @@ finding_metadata := {
 	"id": "RG-JUPYTER-001",
 	"title": "Jupyter server reachable without token/auth",
 	"severity": "high",
+	"evidence_basis": "service_api",
 	"cve": [],
 	"remediation": "Require a token/password on Jupyter; do not bind to 0.0.0.0 on untrusted networks.",
 	"compliance": ["SOC2:CC6.1", "SOC2:CC6.6", "ISO27001:A.5.15", "ISO27001:A.8.20"]

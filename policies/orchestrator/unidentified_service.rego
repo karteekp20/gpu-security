@@ -38,6 +38,7 @@ finding_metadata := {
 	"id": "RG-EXPOSURE-001",
 	"title": "Unidentified service reachable on an AI-infrastructure port",
 	"severity": "info",
+	"evidence_basis": "port_only",
 	"cve": [],
 	"remediation": "Confirm what is listening on this port and whether it should be reachable from the scan vantage point.",
 	"compliance": ["SOC2:CC7.1", "ISO27001:A.8.16"]

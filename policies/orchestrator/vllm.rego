@@ -36,6 +36,7 @@ finding_metadata := {
 	"id": "RG-VLLM-001",
 	"title": "Unauthenticated vLLM inference API exposed",
 	"severity": "high",
+	"evidence_basis": "service_api",
 	"cve": [],
 	"remediation": "Place vLLM behind an authenticated gateway; do not expose the API directly.",
 	"compliance": ["SOC2:CC6.1", "SOC2:CC6.6", "ISO27001:A.5.15", "ISO27001:A.8.20"]

@@ -36,6 +36,7 @@ finding_metadata := {
 	"id": "RG-OLLAMA-001",
 	"title": "Unauthenticated Ollama API exposed",
 	"severity": "medium",
+	"evidence_basis": "service_api",
 	"cve": [],
 	"remediation": "Restrict the Ollama API (11434) to localhost/trusted networks.",
 	"compliance": ["SOC2:CC6.1", "SOC2:CC6.6", "ISO27001:A.5.15", "ISO27001:A.8.20"]

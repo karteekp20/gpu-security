@@ -30,7 +30,15 @@ func fixture() domain.ScanResult {
 		{RuleID: "RG-OLLAMA-001", Title: "Unauthenticated Ollama API exposed", Severity: domain.Medium,
 			Host: "10.0.0.6", Port: 11434, Service: "ollama",
 			Detail:      "HTTP 200 without authentication on port 11434 (no TLS)",
-			Remediation: "Restrict the Ollama API (11434) to localhost/trusted networks."},
+			Remediation: "Restrict the Ollama API (11434) to localhost/trusted networks.",
+			// The three findings below deliberately carry three different
+			// evidence bases, so the reference report shows the distinction a
+			// reader is supposed to be able to make: Ollama's own API, Ray's
+			// own API, and a transport observation with no path at all.
+			Evidence: domain.Evidence{
+				Level: domain.EvidenceObserved, Basis: domain.BasisServiceAPI,
+				ProbedPath: "/api/tags",
+			}},
 		{RuleID: "RG-RAY-001", Title: "Unauthenticated Ray dashboard / Jobs API exposed", Severity: domain.Critical,
 			Host: "10.0.0.5", Port: 8265, Service: "ray-dashboard",
 			Detail:      "HTTP 200 without authentication on port 8265 (no TLS)",
@@ -41,11 +49,18 @@ func fixture() domain.ScanResult {
 			UnconfirmedCVEs: []domain.UnconfirmedCVE{{
 				ID: "CVE-2025-62593", FixedIn: "2.52.0",
 				Why: "Fixed in Ray 2.52.0, and this scan did not determine your version.",
-			}}},
+			}},
+			Evidence: domain.Evidence{
+				Level: domain.EvidenceObserved, Basis: domain.BasisServiceAPI,
+				ProbedPath: "/api/version",
+			}},
 		{RuleID: "RG-TLS-001", Title: "TLS certificate fails verification", Severity: domain.Medium,
 			Host: "10.0.0.5", Port: 8888, Service: "tls",
 			Detail:      "Certificate on port 8888 is self-signed (expires 2027-01-01)",
-			Remediation: "Replace the certificate with one issued by a trusted CA, matching the service hostname and within its validity window."},
+			Remediation: "Replace the certificate with one issued by a trusted CA, matching the service hostname and within its validity window.",
+			Evidence: domain.Evidence{
+				Level: domain.EvidenceObserved, Basis: domain.BasisTransport,
+			}},
 	}
 	r := domain.NewScanResult(start, start.Add(12*time.Second), respondedHosts("10.0.0.5", "10.0.0.6", "10.0.0.7", "10.0.0.8"), findings)
 	// The engagement label and the vantage are part of the artifact a buyer
@@ -857,5 +872,70 @@ func TestTheCoverageBarCarriesNoScannedInput(t *testing.T) {
 	// that the report drops them.
 	if !strings.Contains(html, "&lt;script&gt;") {
 		t.Error("expected the template to escape scanned input elsewhere on the page")
+	}
+}
+
+// TestEvidenceNotesCarryNoScannedInput discharges the gosec G203 suppression
+// on evidenceHTML. The evidence note is emitted as trusted markup so it can
+// carry <code> around the probed path, which makes it the second place in this
+// report where a string is not escaped by the template (the first is the
+// coverage bar).
+//
+// ProbedPath is already confined to the static check table on the scan side,
+// but a report that renders trusted markup must not rest on another package's
+// invariant: the paths here are deliberately hostile, and they must come out
+// inert anyway.
+func TestEvidenceNotesCarryNoScannedInput(t *testing.T) {
+	hostile := `<script>alert(1)</script>`
+
+	bases := []domain.EvidenceBasis{
+		domain.BasisServiceAPI, domain.BasisMetricsEndpoint,
+		domain.BasisGenericPath, domain.BasisPortOnly, domain.BasisTransport,
+	}
+	var findings []domain.Finding
+	for i, b := range bases {
+		findings = append(findings, domain.Finding{
+			RuleID: "RG-TEST-00" + string(rune('1'+i)), Title: hostile, Severity: domain.High,
+			Host: hostile, Port: 9000 + i, Service: hostile,
+			Detail: hostile, Remediation: hostile,
+			Evidence: domain.Evidence{
+				Level: domain.EvidenceObserved, Basis: b, ProbedPath: hostile,
+			},
+		})
+	}
+
+	start := time.Date(2026, 9, 20, 14, 0, 0, 0, time.UTC)
+	r := domain.NewScanResult(start, start.Add(time.Second),
+		respondedHosts(hostile), findings)
+	html := renderString(t, r)
+
+	// Every Evidence line must be inert: the path is escaped, so no live tag
+	// can appear inside one.
+	const marker = `<strong>Evidence:</strong> `
+	for rest := html; ; {
+		i := strings.Index(rest, marker)
+		if i < 0 {
+			break
+		}
+		rest = rest[i+len(marker):]
+		end := strings.Index(rest, "</span>")
+		if end < 0 {
+			t.Fatal("unterminated evidence note")
+		}
+		note := rest[:end]
+		if strings.Contains(note, "<script") {
+			t.Errorf("live script tag inside an evidence note: %q", note)
+		}
+		rest = rest[end:]
+	}
+	// And the hostile path must appear escaped somewhere, which proves the
+	// note really did render it rather than dropping it silently (a test that
+	// passes because nothing was emitted would be worthless).
+	if !strings.Contains(html, "&lt;script&gt;") {
+		t.Error("the hostile probed path never reached the page even in escaped form; " +
+			"this test is not exercising what it claims to")
+	}
+	if strings.Contains(html, "<script>alert(1)</script>") {
+		t.Error("a live script tag reached the page")
 	}
 }
