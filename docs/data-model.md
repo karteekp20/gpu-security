@@ -223,6 +223,9 @@
 | node_id | uuid FK NULL | |
 | rule_id | text NOT NULL | e.g. `RG-RAY-001` |
 | severity | text CHECK IN (critical, high, medium, low, info) | |
+| **evidence_level** | text CHECK IN (observed, policy_compliant, verified_config, cryptographically_attested, runtime_validated) | the same ladder `attestation_states` uses, so "verified" means one thing across the product. **Scoped to the tier that produced the finding:** L1 can only reach `observed`, and `TestL1CannotExceedObserved` enforces it. A credential must never be issued off a finding claiming a rung its tier cannot reach |
+| **evidence_basis** | text CHECK IN (service_api, metrics_endpoint, generic_path, port_only, transport) | *how the subject was identified*, which is a different axis from `evidence_level` and the one that actually varies at a single tier. `service_api` = the service's own API answered and a wildcard control confirmed the path discriminates; `metrics_endpoint` = a conventional `/metrics` path answered, weaker because exporters answer on any path and so skip that control; `generic_path` = only a root page answered, which any web server does; `port_only` = TCP reachability and nothing more; `transport` = observed in the TLS handshake |
+| evidence_probed_path | text NULL | the request path that produced the identification, so a reader can re-run it. Populated only from the scanner's static check table — never from operator input, since a `-buckets` URL can carry a customer's name |
 | title | text | |
 | status | text CHECK IN (open, remediated_unverified, verified_closed, accepted_risk, false_positive) DEFAULT 'open' | the **verification sentinel** lifecycle (CLAUDE.md §8) |
 | evidence_ref | uuid FK→evidence_index NULL | |

@@ -27,6 +27,7 @@ finding_metadata := {
 	"id": "RG-SLURM-001",
 	"title": "Slurm controller port reachable",
 	"severity": "medium",
+	"evidence_basis": "port_only",
 	"cve": [],
 	"remediation": "Restrict slurmctld (6817) to the cluster management network only.",
 	"compliance": ["SOC2:CC6.6", "ISO27001:A.8.20"]

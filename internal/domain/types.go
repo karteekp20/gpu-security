@@ -144,6 +144,98 @@ type Observation struct {
 	Note       string    `json:"note,omitempty"`
 }
 
+// EvidenceLevel is the verification ladder from docs/data-model.md. It states
+// how strongly a finding's subject has been VERIFIED, and it is a property of
+// the tier that produced the finding, not of the rule.
+//
+// L1 can only ever reach EvidenceObserved, and every finding this scanner
+// emits says so. That the value is constant is the point, exactly as
+// `tier: "L1"` beside the grade is constant and ships anyway: the constant is
+// the ceiling, and a reader who cannot see the ceiling supplies their own,
+// which is always more generous than ours. The higher rungs exist here so the
+// vocabulary is one vocabulary when L2/L3 arrive, not a second one bolted on.
+type EvidenceLevel string
+
+const (
+	// EvidenceObserved - we saw it from outside the host, this once. The L1
+	// ceiling.
+	EvidenceObserved EvidenceLevel = "observed"
+	// EvidencePolicyCompliant - a policy evaluated the observation and agreed.
+	EvidencePolicyCompliant EvidenceLevel = "policy_compliant"
+	// EvidenceVerifiedConfig - the config itself was read, not inferred (L2).
+	EvidenceVerifiedConfig EvidenceLevel = "verified_config"
+	// EvidenceCryptographicallyAttested - a signed quote verified against a
+	// vendor root (L3).
+	EvidenceCryptographicallyAttested EvidenceLevel = "cryptographically_attested"
+	// EvidenceRuntimeValidated - observed holding over time, in the kernel (L3).
+	EvidenceRuntimeValidated EvidenceLevel = "runtime_validated"
+)
+
+// L1EvidenceCeiling is the highest evidence level an agentless scan can reach.
+// Enforced by TestL1CannotExceedObserved, which is the evidence-level sibling
+// of TestL1CannotEarnAPlus.
+const L1EvidenceCeiling = EvidenceObserved
+
+// EvidenceBasis is how the finding's subject was IDENTIFIED. Unlike
+// EvidenceLevel it varies per rule, and it is the half that was missing: two
+// findings at the same severity can rest on very different evidence, and
+// nothing in the report said so.
+//
+// The concrete case that motivates it: `/api/tags` is Ollama's own API and
+// nothing else serves it, while `/` is MLflow's root page and every web server
+// on earth answers that. Both produced a finding that looked equally solid. A
+// security lead who spot-checks the weak one first and finds a different
+// service there has no reason to trust the strong ones.
+type EvidenceBasis string
+
+const (
+	// BasisServiceAPI - the service's own API or health path answered 2xx
+	// without credentials, and a wildcard control confirmed the path
+	// discriminates. The strongest identification L1 has.
+	BasisServiceAPI EvidenceBasis = "service_api"
+	// BasisMetricsEndpoint - a conventional Prometheus /metrics path answered.
+	// Weaker than BasisServiceAPI on purpose: exporters answer 2xx on any
+	// path, so these rules are exempt from the wildcard control (see
+	// pathAgnosticServices), which is precisely the guard that makes
+	// BasisServiceAPI strong.
+	BasisMetricsEndpoint EvidenceBasis = "metrics_endpoint"
+	// BasisGenericPath - only a root page answered. Any web server does that,
+	// so this identifies the software weakly even when the exposure is real.
+	BasisGenericPath EvidenceBasis = "generic_path"
+	// BasisPortOnly - TCP reachability and nothing else: no application-layer
+	// response was obtained or expected. The finding is about a port being
+	// reachable, and claims nothing about what is behind it.
+	BasisPortOnly EvidenceBasis = "port_only"
+	// BasisTransport - observed in the TLS layer: a certificate we verified, a
+	// version we negotiated, or the absence of TLS where a service asked for
+	// credentials. One value covers all three because the evidence is the
+	// handshake either way, and splitting it would imply a distinction the
+	// remediation does not have.
+	BasisTransport EvidenceBasis = "transport"
+)
+
+// Evidence records what a finding rests on: the ceiling of the tier that
+// produced it, and how its subject was identified.
+//
+// It is deliberately a struct rather than one flattened string. The two facts
+// answer different questions - "how hard did you verify this?" and "how do you
+// know it is that service?" - and a single field would force a reader to infer
+// one from the other, which is the mistake the whole field exists to stop.
+type Evidence struct {
+	Level EvidenceLevel `json:"level"`
+	Basis EvidenceBasis `json:"basis"`
+	// ProbedPath is the request path that produced the identification, so a
+	// reader can re-run it with curl in one line and settle the finding
+	// themselves. Empty when there is no path to state (reachability-only and
+	// transport findings).
+	//
+	// It is populated ONLY from the static check table, never from operator
+	// input: a -buckets URL can carry a customer's bucket name, and the
+	// benchmark snapshot (P9) must not gain a route to it through a new field.
+	// Enforced by TestProbedPathComesOnlyFromTheCheckTable.
+	ProbedPath string `json:"probed_path,omitempty"`
+}
+
 type Finding struct {
 	RuleID      string   `json:"rule_id"`
 	Title       string   `json:"title"`
@@ -153,6 +245,9 @@ type Finding struct {
 	Service     string   `json:"service"`
 	Detail      string   `json:"detail"`
 	Remediation string   `json:"remediation"`
+	// Evidence is what this finding rests on. Always present: a finding with
+	// no stated evidence is the thing this field exists to prevent.
+	Evidence Evidence `json:"evidence"`
 	// CVEs are only the CVEs this scan can assert about this host: the
 	// condition the advisory describes is the condition we observed. A
 	// consumer may treat these as findings.
@@ -216,6 +311,53 @@ const TierL1 = "L1"
 // CLAUDE.md 10.0's A band (85-94), not 100. 95-100 is the A+ band and belongs
 // to the attested tiers.
 const L1CleanScore = 94
+
+// GradeBand is one row of the CLAUDE.md 10.0 band table: a grade and the
+// score range that earns it.
+type GradeBand struct {
+	Grade Grade
+	// Low and High are inclusive.
+	Low, High int
+	// AboveL1Ceiling marks a band this tier cannot award whatever it observes.
+	// It is carried rather than inferred so the report can draw the ceiling
+	// instead of leaving a reader to assume the scale is all available.
+	AboveL1Ceiling bool
+}
+
+// GradeBands returns the band table, worst first.
+//
+// This is the canonical statement of the ranges in code. Until now they lived
+// only in prose (CLAUDE.md 10.0 and the report's own matrix) while gradeFor
+// returned bare numbers, so nothing connected the two: changing a returned
+// score to one that falls in a different band would have been silent, and the
+// report would have printed a grade beside a score that contradicts it.
+// TestEveryGradeScoreFallsInItsOwnBand closes that.
+//
+// The scores gradeFor returns are representative points in a band, not
+// measurements - which is why the report draws the band a scan landed in
+// rather than a marker at a position on a line.
+func GradeBands() []GradeBand {
+	return []GradeBand{
+		{Grade: "F", Low: 0, High: 49},
+		{Grade: "C", Low: 50, High: 69},
+		{Grade: "B", Low: 70, High: 84},
+		{Grade: L1GradeCeiling, Low: 85, High: 94},
+		{Grade: GradeAPlus, Low: 95, High: 100, AboveL1Ceiling: true},
+	}
+}
+
+// BandFor returns the band a score falls in, and whether one was found.
+// GradeInconclusive has no band: it is not a grade, so it has no position on
+// the scale, and a chart that placed it at zero would render "we did not look"
+// as "we looked and it was terrible".
+func BandFor(score int) (GradeBand, bool) {
+	for _, b := range GradeBands() {
+		if score >= b.Low && score <= b.High {
+			return b, true
+		}
+	}
+	return GradeBand{}, false
+}
 
 // ScanParams records the settings that decide what a result means, so a report
 // can be reproduced from itself.
@@ -316,6 +458,21 @@ type ScanResult struct {
 	HostsUnresolved  int           `json:"hosts_unresolved"`
 	HostsProbeFailed int           `json:"hosts_probe_failed,omitempty"`
 	Unreachable      []HostSummary `json:"unreachable,omitempty"`
+	// Responded lists the hosts that answered, in the order they were
+	// probed. It is the complement of Unreachable, and it exists because a
+	// host that answered and raised NO finding was previously unrecoverable
+	// from a result: the report could say "15 responded, 13 had findings" and
+	// not say which two were clean.
+	//
+	// That absence is worth a field of its own rather than an inference. A
+	// clean responded host is the only positive evidence this tier produces -
+	// it is the answer to "does this thing flag everything it touches?", which
+	// is the question a security lead is holding while reading the findings -
+	// and a reader cannot reconstruct the list from counts. It is also what
+	// lets the HTML and the JSON state the same facts, which they must: an
+	// exposure strip drawn from hosts the JSON does not contain would be a
+	// picture no one could check against the data beside it.
+	Responded []HostSummary `json:"responded,omitempty"`
 	// AddressesUnassessed counts addresses behind the scanned names that were
 	// never probed, and MultiAddress names the hosts they belong to. A name
 	// with several addresses is several machines; probing one of them and
@@ -421,6 +578,7 @@ func NewResult(run Run) ScanResult {
 		switch h.State {
 		case HostResponded:
 			r.HostsResponded++
+			r.Responded = append(r.Responded, h)
 		case HostUnresolved:
 			r.HostsUnresolved++
 			r.Unreachable = append(r.Unreachable, h)

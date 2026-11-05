@@ -641,3 +641,90 @@ func TestAddressTargetsCarryNoAddressMap(t *testing.T) {
 		t.Errorf("grade %q, want %q", r.Grade, L1GradeCeiling)
 	}
 }
+
+// TestEveryGradeScoreFallsInItsOwnBand connects gradeFor's returned numbers to
+// the CLAUDE.md §10.0 band table for the first time. The two were previously
+// unrelated - gradeFor returned bare integers and the bands lived in prose -
+// so a score edited to a value in a different band would have printed a grade
+// that its own score contradicts, on the most-read line of the report.
+//
+// Driven through gradeFor rather than over a list of constants, so a new
+// branch is covered by construction.
+func TestEveryGradeScoreFallsInItsOwnBand(t *testing.T) {
+	cases := []struct {
+		name     string
+		sum      map[Severity]int
+		resp     int
+		complete bool
+	}{
+		{"critical", map[Severity]int{Critical: 1}, 1, true},
+		{"high", map[Severity]int{High: 1}, 1, true},
+		{"medium", map[Severity]int{Medium: 1}, 1, true},
+		{"low", map[Severity]int{Low: 1}, 1, true},
+		{"info", map[Severity]int{Info: 1}, 1, true},
+		{"clean", map[Severity]int{}, 1, true},
+		{"nothing responded", map[Severity]int{}, 0, true},
+		{"incomplete", map[Severity]int{}, 1, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			score, grade := gradeFor(tc.sum, tc.resp, tc.complete)
+			if grade == GradeInconclusive {
+				// Not a grade, so it has no band. It must also not be
+				// reported with a score that reads as one.
+				if score != 0 {
+					t.Errorf("inconclusive run scored %d; N/A is not a position on the scale", score)
+				}
+				return
+			}
+			band, ok := BandFor(score)
+			if !ok {
+				t.Fatalf("score %d (grade %s) falls in no band at all", score, grade)
+			}
+			if band.Grade != grade {
+				t.Errorf("gradeFor returned %s with score %d, but %d is in the %s band "+
+					"(%d-%d): the report would print a grade its own score contradicts",
+					grade, score, score, band.Grade, band.Low, band.High)
+			}
+			if band.AboveL1Ceiling {
+				t.Errorf("gradeFor returned %s/%d, which is above the L1 ceiling", grade, score)
+			}
+		})
+	}
+}
+
+// TestTheGradeBandsCoverTheScaleWithoutOverlapping. A gap would let a score
+// fall in no band; an overlap would make BandFor's answer depend on table
+// order rather than on the score.
+func TestTheGradeBandsCoverTheScaleWithoutOverlapping(t *testing.T) {
+	bands := GradeBands()
+	if bands[0].Low != 0 {
+		t.Errorf("the scale starts at %d, not 0", bands[0].Low)
+	}
+	if last := bands[len(bands)-1]; last.High != 100 {
+		t.Errorf("the scale ends at %d, not 100", last.High)
+	}
+	for i, b := range bands {
+		if b.Low > b.High {
+			t.Errorf("%s band is inverted: %d-%d", b.Grade, b.Low, b.High)
+		}
+		if i == 0 {
+			continue
+		}
+		if prev := bands[i-1]; b.Low != prev.High+1 {
+			t.Errorf("%s starts at %d but %s ends at %d: the scale has a %s",
+				b.Grade, b.Low, prev.Grade, prev.High,
+				map[bool]string{true: "gap", false: "overlap"}[b.Low > prev.High+1])
+		}
+	}
+	// Exactly one band is above the tier ceiling, and it is A+.
+	var above []Grade
+	for _, b := range bands {
+		if b.AboveL1Ceiling {
+			above = append(above, b.Grade)
+		}
+	}
+	if len(above) != 1 || above[0] != GradeAPlus {
+		t.Errorf("bands above the L1 ceiling = %v, want exactly [A+]", above)
+	}
+}

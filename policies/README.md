@@ -152,7 +152,8 @@ P4), so the duplication is deliberate.
 Duplication drifts, though, and the drift would be invisible until a
 customer's report and their credential disagreed about a severity. So
 `internal/scan/rule_parity_test.go` fails the build if the two sides disagree
-on any rule ID, title, severity, remediation string or CVE list — and if
+on any rule ID, title, severity, evidence basis, remediation string or CVE
+list — and if
 `lib.known_services` falls out of step with the scanner's service table. The
 CVE check covers **both** lists field by field, including each unconfirmed
 CVE's `why`, because that text is the instruction a reader acts on: Go and Rego
@@ -170,6 +171,17 @@ dark-host test, drift an unconfirmed CVE's `why`. Each turns the suite red.
   test can read it without an OPA dependency. **No comments and no trailing
   commas in there** — Rego accepts both and the parity test does not, so put
   the commentary above the `finding_metadata :=` line.
+- **`evidence_basis` is not yours to choose.** It records how the scanner
+  identified the subject, which is a fact about the request the scanner sends,
+  so Go **derives** it from the check table — scheme, path, and whether the
+  service is exempt from the wildcard control — and the literal here is the
+  independent second statement of it. Copy what `evidenceBasisForRule` returns;
+  if the two disagree, `TestGoAndRegoRuleSetsAgree` fails and the right fix is
+  almost always the rule file, not the derivation. A probe path moving from
+  `/` to a real API path *should* change the basis, and this is the gate that
+  makes someone notice. Note that `evidence_basis` and the scan-time
+  `evidence_level` are different axes: the level is the tier's ceiling
+  (`observed` at L1) and is not rule metadata, so it does not appear here.
 - **`cve` holds only CVEs the tier can assert.** If the advisory names a
   version that fixes it, L1 cannot assert it — L1 decides every rule from a
   status code and reads no response bodies, so it never learns a version. Such

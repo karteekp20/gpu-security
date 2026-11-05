@@ -50,6 +50,7 @@ finding_metadata := {
 	"id": "RG-RAY-001",
 	"title": "Unauthenticated Ray dashboard / Jobs API exposed",
 	"severity": "critical",
+	"evidence_basis": "service_api",
 	"cve": ["CVE-2023-48022"],
 	"cve_unconfirmed": [{
 		"id": "CVE-2025-62593",

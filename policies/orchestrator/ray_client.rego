@@ -30,6 +30,7 @@ finding_metadata := {
 	"id": "RG-RAY-002",
 	"title": "Ray client server port reachable",
 	"severity": "high",
+	"evidence_basis": "port_only",
 	"cve": [],
 	"remediation": "Restrict the Ray client port (10001) to trusted networks only.",
 	"compliance": ["SOC2:CC6.6", "ISO27001:A.8.20"]

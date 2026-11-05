@@ -41,6 +41,7 @@ finding_metadata := {
 	"id": "RG-DCGM-001",
 	"title": "NVIDIA DCGM exporter reachable without authentication",
 	"severity": "medium",
+	"evidence_basis": "metrics_endpoint",
 	"cve": [],
 	"remediation": "Restrict port 9400 to your monitoring network (in Kubernetes, a ClusterIP service with internalTrafficPolicy: Local rather than a NodePort). The metrics name the pod and namespace using each GPU, so this enumerates tenant workloads.",
 	"compliance": ["SOC2:CC6.6", "ISO27001:A.8.12", "ISO27001:A.8.20"]

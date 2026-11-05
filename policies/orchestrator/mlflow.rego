@@ -36,6 +36,7 @@ finding_metadata := {
 	"id": "RG-MLFLOW-001",
 	"title": "Unauthenticated MLflow server exposed",
 	"severity": "high",
+	"evidence_basis": "generic_path",
 	"cve": [],
 	"remediation": "Put MLflow behind authentication; restrict network exposure.",
 	"compliance": ["SOC2:CC6.1", "SOC2:CC6.6", "ISO27001:A.5.15", "ISO27001:A.8.20"]

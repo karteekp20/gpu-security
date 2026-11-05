@@ -6,7 +6,7 @@ re-deriving context. It is the *live backlog*. It is **not** a source of truth:
 outrank anything written here. If this file and a decision row disagree, the
 decision row wins and this file is wrong.
 
-**Last updated:** 2026-11-02 · **`main` at the time:** `50b8f91` (+ this PR: C1)
+**Last updated:** 2026-11-05 · **`main` at the time:** `94b78fd` (+ uncommitted: G3, C2, C3, D-1)
 
 ---
 
@@ -58,21 +58,30 @@ review; C-items are chart work; D-items are decisions to record.**
 | G1 | **Four** titles no longer claim internet exposure (`RG-TRITON-002`, `RG-TORCHSERVE-002`, `RG-DCGM-001`, and `RG-BUCKET-001`, which the review did not name but had the same defect). Both Go and Rego sides, with a note in `detect.go` so the reason survives the next person who wants a punchier title. Verified by mutation: drifting one Rego title fails `TestGoAndRegoRuleSetsAgree` | PR #5 |
 | G7 | The report prints a "How this grade was reached" table: first-match-wins rows from `gradeFor`, plus the ordering point — an observed finding stands even on an unfinished scan, but an unfinished scan can never earn a clean grade. HTML only; the matrix is static documentation, not data about a particular scan, so it is not duplicated into every JSON | PR #5 |
 | G2 | **Grades are tier-scoped.** §10.0 rewritten: per-tier ceilings (L1 → A, L2 → A, L3 → A+), grades reported as `<tier>: <grade>`, credential issuance keyed to which tiers were assessed, L1 alone yields no credential. Scanner: clean L1 is `94/A`, `tier: "L1"` in the JSON, ceiling stated with the grade. `TestL1CannotEarnAPlus` sweeps all 32 severity combinations across completed/interrupted/degraded/unreached runs; verified by mutation | PR #6 |
-| R1 | **Hostnames are resolved once and pinned.** Every probe for a name dials the one address resolution chose; the report states it (`probed at 10.0.0.5`, `addresses` in the JSON) while the name stays in the URL, `Host` header, SNI and the x509 check. A name with several addresses discloses the unprobed ones and cannot earn a clean grade (`N/A`, exit 7). Verified end to end against a container with two A records for one name; both halves mutation-tested; the address is kept out of the P9 snapshot by its own guard | This PR. Was not on this list — found by reading the resolver path after a question about hostname input |
-| G6 | **CVE claims are split into asserted and unconfirmed.** `cves` now holds only CVEs whose condition is the condition we observed; a CVE whose advisory names a fixed version moves to `cves_unconfirmed` with that version and the check that settles it. `RG-TORCHSERVE-001` asserts none. Found a real false claim on the way: the demo stack asserted `CVE-2023-43654` against TorchServe **0.12.0**, which NVD records as fixed in **0.8.2**. The Ray pair was true only by luck - 2.9.0 is below 2.52.0, but the scanner never read the version. Grade unchanged (`F`, 40, 21 findings), which is the test that severity never rested on the CVE | This PR |
+| R1 | **Hostnames are resolved once and pinned.** Every probe for a name dials the one address resolution chose; the report states it (`probed at 10.0.0.5`, `addresses` in the JSON) while the name stays in the URL, `Host` header, SNI and the x509 check. A name with several addresses discloses the unprobed ones and cannot earn a clean grade (`N/A`, exit 7). Verified end to end against a container with two A records for one name; both halves mutation-tested; the address is kept out of the P9 snapshot by its own guard | PR #9, `8565f37`. Was not on this list — found by reading the resolver path after a question about hostname input |
+| G6 | **CVE claims are split into asserted and unconfirmed.** `cves` now holds only CVEs whose condition is the condition we observed; a CVE whose advisory names a fixed version moves to `cves_unconfirmed` with that version and the check that settles it. `RG-TORCHSERVE-001` asserts none. Found a real false claim on the way: the demo stack asserted `CVE-2023-43654` against TorchServe **0.12.0**, which NVD records as fixed in **0.8.2**. The Ray pair was true only by luck - 2.9.0 is below 2.52.0, but the scanner never read the version. Grade unchanged (`F`, 40, 21 findings), which is the test that severity never rested on the CVE | PR #11, `23833c5` |
 | G8 | §3 now reads "Agentless, read-only **active** probe … (one benign GET per check plus a wildcard control; nothing is installed and no credentials are used)" | PR #5 |
+| G3 | **Findings carry the evidence they rest on.** An `evidence` block per finding: `level` (the data-model ladder, always `observed` at L1, stated so the ceiling is visible) and `basis` - `service_api` / `metrics_endpoint` / `generic_path` / `port_only` / `transport` - plus the `probed_path` that produced it, so a reader can re-run the request. The basis is **derived from the check table** rather than declared, so moving a probe path changes it and fails parity until the rule file agrees. Measured on the demo stack: 14 `service_api`, 4 `metrics_endpoint`, 6 `port_only`, 2 `transport`, and exactly **one `generic_path` - MLflow**, the case this row was written about. Grade unchanged (`F`, 40, 21 findings): evidence is new information, not a re-scoring. Five mutations, each failing its own gate. Also closes the two deck slides promising a confidence tier the report did not emit | `domain.Evidence`; `evidenceBasisForRule` in `detect.go`; all 19 `.rego` files; `internal/scan/evidence_test.go`; decision row 2026-11-05 |
+| C2 | **Host × port exposure strip.** One row per host that *answered*, one column per port probed, each cell the worst finding there with a severity letter as well as a colour. Required a new `domain.ScanResult.Responded`: the responded host list was never retained, so a host that answered and raised nothing was unrecoverable from the artifact - a reporting gap independent of the chart. Three things the build surfaced: the bucket rule has no port, so without a port-less column a public bucket drew as a *clean* host; the label column truncated by bytes, which splits a rune and emits invalid UTF-8 into an SVG; and the `.sev` pill palette is not monotonic in greyscale, so printed, an **Info cell was as dark as a Critical one** on two of the negative controls. The new field also opened a P9 route that needed its own structural guard. Six mutations | `internal/report/exposure.go`; `domain.ScanResult.Responded`; `internal/report/exposure_test.go`; `TestSnapshotCarriesNoRespondedHostIdentity`; demo beat 3c in `docs/assessment/demo.md`; decision row 2026-11-05 |
+| C3 | **Grade band strip**, above the G7 matrix. The §10.0 scale with the achieved band filled, the A+ band hatched and labelled *L3 only*, and every band carrying its letter and range as text. **No marker**: `gradeFor` returns a representative score per band, not a measurement, so a needle would claim precision we do not have. An inconclusive run draws nothing, because N/A is not a position on the scale. Moved the band table into code (`domain.GradeBands`), which closed a real gap - the ranges lived only in prose while `gradeFor` returned bare integers, so a score edited into the wrong band would have been silent. Two defects found by rendering: the achieved band drew unfilled (CSS specificity) and the A+ label was illegible over its hatch. Four mutations | `internal/report/gradeband.go`; `domain.GradeBands`/`BandFor`; `internal/report/gradeband_test.go`; decision row 2026-11-05 |
+| D-1 | **Decided: no DCGM body parsing before the gate.** `RG-DCGM-001` keeps deciding from the status code and discarding the body. The analysis found the prerequisite nobody had written down - the P3 denylist is made of *content* words, and `GPUModel`, `GPUUUID`, `Pod`, `Namespace`, `Utilization` tripped none of them, so the suite would have waved through the very data that makes this sensitive. `forbiddenIdentityFieldNames` now bars tenant identity from every boundary type, with its own message, and ships **ahead** of any parser rather than alongside one | `test/metadata_only_test.go`; decision row 2026-11-05 |
 
-### Open — larger, and worth doing in this order
+### Open
 
-The short, self-contained items are all done. Everything below needs either a
-decision or more than one sitting, so read the note before starting one.
+**Nothing.** As of 2026-11-05 the engineering backlog from the external review
+is empty: G3 and the three charts are built, and D-1 was settled as a decision
+rather than built (see Done). Both are recorded in §18.
 
+This is the state P2 was written for. **The only thing that moves this project
+now is a buyer conversation** - the §14 gate is still `0/3` and `0/2`, and
+`docs/assessment/outreach.md` is written and unused. Do not restock this list
+to pass the time; §4 below is the list of things that would be the wrong
+answer, and it is still correct.
+
+<!-- When a real item appears, restore the table:
 | # | Item | Notes |
 | :-- | :-- | :-- |
-| **G3** | No evidence level on findings, **although the ladder already exists** at `docs/data-model.md:300` (`observed`, `policy_compliant`, `verified_config`, `cryptographically_attested`, `runtime_validated` — five levels, finer than the reviewer's three). The shipping artifact ignores it. The concrete reason it matters: probe paths differ in evidentiary strength and nothing records it. `/v1/models` (vLLM), `/models` (TorchServe mgmt), `/api` (Jupyter), `/api/tags` (Ollama), `/get_model_info` (SGLang) are the service's **own API**; `/` (MLflow) is **only the root page**. Ray was the worst case and is fixed (G4). Touches `domain.Finding`, `detect.go`, all 19 `.rego` files and the parity test |
-| **C2** | **Host × port exposure strip** (inline SVG). The frame a security lead photographs, and it renders the negative controls — `.40` and `.42` quiet beside `.10` and `.22` answers "does this scream at everything?" instead of arguing it (demo beat 3c). **Unlike C1 this one carries host names into generated markup**, so `coverageBarSVG`'s "nothing from the scan reaches it" cannot be reused — it needs real escaping and its own version of `TestTheCoverageBarCarriesNoScannedInput`. It is also the first chart whose height grows with the target count: a /24 is 254 rows |
-| **C3** | **Grade band strip** with the G7 matrix under it |
-| **D-1** | Record a decision on **DCGM body parsing**. We detect the exporter on 9400 and discard the body. Its metrics carry GPU model, UUID, utilisation **and pod/namespace labels** — so a bounded agentless GPU inventory is reachable with no agent, which is what the external review's "Stage 2" wants and cannot otherwise have. But it would be the first response body the scanner parses (today every rule decides from the status code alone; the bucket rule discards the body unparsed because object keys are customer data). Needs a dated row and an explicit P3 analysis **before** anyone writes a parser. Instinct on file: worth doing eventually, not before the gate, and only with a hard allowlist of metric names and labels |
+-->
 
 ### Chart constraints — non-negotiable, do not rediscover these
 
@@ -172,6 +181,16 @@ These are habits that found real defects, not ceremony:
   `report_claims`, `tier_grades`, `release_v0.2.0`, `v020_preflight`,
   `pinned_resolution`). `Demo_V1` is a deliberate snapshot and was kept; it and
   `main` are the only branches left.
+- **`Demo_V1` has gone stale, and the way it is stale is the dangerous way.**
+  Checked 2026-11-05: it sits at `a66fbdb` with **no commits of its own** and is
+  **27 behind `main`**, so it predates the Rego library, the coverage bar, the
+  scan-parameters table, the pinned-resolution fix *and the asserted/unconfirmed
+  CVE split*. Demoing from it would put the **false `CVE-2023-43654` claim
+  against TorchServe 0.12.0 back on screen** — the one an operator refutes with
+  `pip show torchserve`, which is why G6 exists. A snapshot branch that is
+  silently a month behind is worse than no snapshot, because its name says
+  "this is the demo". Either re-cut it from `main` or delete it and demo from
+  the release tag; do not leave it as the thing called `Demo_V1`.
 - ~~A `v0.1.0` **draft** release~~ — deleted 2026-10-31. It was never published,
   was superseded by `v0.1.1`, and its 18 assets were signed in the **old
   detached `.sig`/`.pem` format**, which a current cosign cannot verify at all

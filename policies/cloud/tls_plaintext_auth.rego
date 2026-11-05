@@ -38,6 +38,7 @@ finding_metadata := {
 	"id": "RG-TLS-002",
 	"title": "Authenticated service served over plaintext HTTP",
 	"severity": "medium",
+	"evidence_basis": "transport",
 	"cve": [],
 	"remediation": "Terminate TLS in front of this service; credentials sent to it currently traverse the network in the clear.",
 	"compliance": ["SOC2:CC6.7", "ISO27001:A.8.24"]

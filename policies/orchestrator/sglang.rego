@@ -36,6 +36,7 @@ finding_metadata := {
 	"id": "RG-SGLANG-001",
 	"title": "Unauthenticated SGLang inference API exposed",
 	"severity": "high",
+	"evidence_basis": "service_api",
 	"cve": [],
 	"remediation": "Place SGLang behind an authenticated gateway; bind --host to loopback or a private address rather than exposing port 30000.",
 	"compliance": ["SOC2:CC6.1", "SOC2:CC6.6", "ISO27001:A.5.15", "ISO27001:A.8.20"]

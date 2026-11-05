@@ -50,9 +50,16 @@ you get asked mid-demo and guessing is worse than not knowing:
 | `.20` `.21` `.23` `.24` | vLLM, Triton, SGLang, DCGM exporter — the four stand-ins |
 | `.22` | Real TorchServe, token auth **off** — the second critical |
 | `.30` | Slurm controller (TCP listener; reachability only) |
-| `.40` | **Control:** a service with auth on every path |
+| `.40` | **Control:** a service with auth on every path (reads Medium, not critical) |
 | `.42` | **Control:** real TorchServe with its default token auth **on** |
 | `.50` | Real Ray behind an nginx TLS proxy — the third critical |
+| `.41` | **Control:** a Ray dashboard on 8265 bound to **loopback** inside its own namespace. There is a Ray dashboard there and we correctly say **nothing** about it — the strongest control on the subnet |
+| `.1` | The Docker bridge gateway, i.e. your own machine. Answers (refuses connections, which is what proves a host is alive) and raises nothing |
+
+`.41` and `.1` are the two hosts that answer and raise **no finding at all**, so
+they are the two empty rows on the exposure map. Before that chart existed they
+were invisible in the report, which is why they were missing from this table.
+`.25` is real Triton and only runs under `--profile heavy`, so it is normally absent.
 
 ## The run (about 60 seconds)
 
@@ -142,6 +149,22 @@ everything. Two hosts on that subnet answer that:
 >
 > That is what the number on the report is worth. If it flagged those two, you
 > would be right to ignore all of it."
+
+**Then scroll up to the exposure map and let it make the point for you.** This
+is the chart worth photographing, and it is the one place the quiet hosts are
+visible *beside* the loud ones rather than absent from a list:
+
+> "Fifteen hosts answered. Three carry a critical. Two raised nothing at all —
+> and one of those, .41, is running a Ray dashboard on 8265 right now. It's
+> bound to loopback, so nothing outside the host can reach it, and the scanner
+> says nothing about it. That's the same rule that produced the critical on
+> .10. Same software, same port, same rule, opposite answer — because the only
+> thing that differs is whether it is reachable."
+
+That is the strongest version of the argument available, and it needs no
+qualification: the control is not a quieter finding, it is **no finding on the
+software the whole pitch is about**. If only one chart gets looked at, make it
+this one.
 
 Those two containers exist in the integration suite as negative controls, and
 the tests assert they raise *nothing more* than that. Say that too — it is the

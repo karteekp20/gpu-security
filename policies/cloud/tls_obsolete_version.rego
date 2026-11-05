@@ -38,6 +38,7 @@ finding_metadata := {
 	"id": "RG-TLS-003",
 	"title": "Obsolete TLS version negotiated",
 	"severity": "medium",
+	"evidence_basis": "transport",
 	"cve": [],
 	"remediation": "Disable TLS 1.0 and 1.1 on this listener and require TLS 1.2 or later (RFC 8996); on a terminating proxy this is one directive.",
 	"compliance": ["SOC2:CC6.7", "ISO27001:A.8.24"]

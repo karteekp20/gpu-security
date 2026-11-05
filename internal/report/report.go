@@ -63,6 +63,16 @@ type view struct {
 	CoverageSentence string
 	CoverageNote     string
 	CoverageBar      template.HTML
+	// The host x port exposure strip. Rows drive its presence, same as the
+	// coverage bar's segments: no responded hosts means no grid to draw.
+	ExposureRows     int
+	ExposureSentence string
+	ExposureNote     string
+	ExposureStrip    template.HTML
+	// The grade band strip. Absent on an inconclusive run, which has no
+	// position on the scale (see buildGradeBands).
+	GradeBandSentence string
+	GradeBandStrip    template.HTML
 }
 
 func newView(r domain.ScanResult) view {
@@ -101,6 +111,8 @@ func newView(r domain.ScanResult) view {
 	}
 
 	segs := coverageSegments(r)
+	strip := buildExposureStrip(r)
+	bands := buildGradeBands(r)
 
 	shown := r.Unreachable
 	extra := 0
@@ -125,6 +137,13 @@ func newView(r domain.ScanResult) view {
 		CoverageSentence: coverageSentence(r, segs),
 		CoverageNote:     coverageNote(r),
 		CoverageBar:      coverageBarSVG(segs),
+		ExposureRows:     len(strip.Rows),
+		ExposureSentence: exposureSentence(strip),
+		ExposureNote:     exposureNote(strip),
+		ExposureStrip:    exposureStripSVG(strip),
+
+		GradeBandSentence: gradeBandSentence(r, bands),
+		GradeBandStrip:    gradeBandSVG(bands),
 	}
 }
 
@@ -337,8 +356,56 @@ func gradeClass(g domain.Grade) string {
 	return b.String()
 }
 
+// evidenceNote renders what a finding rests on as something a reader can act
+// on, rather than as an enum. The phrasing carries the caveat with the claim,
+// because the whole purpose of the field is that a security lead can tell
+// which findings to spot-check first - and "service_api" does not say that.
+//
+// Kept to one line per finding: this report is an email attachment, and 21
+// findings times a paragraph is a document nobody scrolls.
+func evidenceNote(e domain.Evidence) string {
+	// Escaped here rather than trusted. ProbedPath is already constrained to
+	// the static check table upstream, but this function's output is marked as
+	// trusted markup, so it must not depend on another package's invariant
+	// holding - defence in depth is cheaper than a reasoned exemption.
+	path := template.HTMLEscapeString(e.ProbedPath)
+	switch e.Basis {
+	case domain.BasisServiceAPI:
+		if e.ProbedPath == "" {
+			return "the service&rsquo;s own API answered an unauthenticated request."
+		}
+		return fmt.Sprintf("the service&rsquo;s own API answered (GET <code>%s</code>), "+
+			"and a path that cannot exist did not.", path)
+	case domain.BasisMetricsEndpoint:
+		return fmt.Sprintf("a conventional metrics path answered (GET <code>%s</code>) &mdash; "+
+			"exporters answer on any path, so this identifies the open endpoint more firmly "+
+			"than it identifies the software behind it.", path)
+	case domain.BasisGenericPath:
+		return fmt.Sprintf("only the root page answered (GET <code>%s</code>) &mdash; any web "+
+			"server answers that, so confirm the service name before acting on it. The "+
+			"exposure is observed; the attribution is the weaker half.", path)
+	case domain.BasisPortOnly:
+		return "TCP reachability only &mdash; the port accepted a connection and nothing " +
+			"identified what is behind it."
+	case domain.BasisTransport:
+		return "observed during the TLS handshake, not from any response."
+	}
+	return ""
+}
+
+// evidenceHTML is trusted markup: evidenceNote emits a fixed sentence per
+// basis plus a ProbedPath that comes only from the static check table, never
+// from a response or from operator input (domain.Evidence.ProbedPath, and
+// TestProbedPathComesOnlyFromTheCheckTable on the scan side). The same
+// discipline as the coverage bar: the suppression is discharged by a test
+// rather than by this comment, see TestEvidenceNotesCarryNoScannedInput.
+func evidenceHTML(e domain.Evidence) template.HTML {
+	return template.HTML(evidenceNote(e)) //nolint:gosec // G203: see doc comment
+}
+
 var htmlTmpl = template.Must(template.New("r").Funcs(template.FuncMap{
-	"gradeClass": gradeClass,
+	"gradeClass":   gradeClass,
+	"evidenceHTML": evidenceHTML,
 }).Parse(`<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -383,6 +450,54 @@ table.params{min-width:0}table.params th{width:11rem;white-space:nowrap}
 .covbar text{font:11px -apple-system,Segoe UI,Roboto,sans-serif;fill:var(--fg)}
 .covbar .covnum{font-weight:600;text-anchor:end}
 .covbar .covlab{fill:var(--muted)}
+.expstrip{display:block;width:100%;height:auto;margin:.8rem 0 .4rem;overflow:visible}
+.expstrip text{font:11px -apple-system,Segoe UI,Roboto,sans-serif;fill:var(--fg)}
+.expstrip .expport{font-size:10px;fill:var(--muted);text-anchor:middle}
+.expstrip .exphost{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10.5px}
+.expstrip .explab{fill:var(--muted);font-size:10px}
+.expstrip .expmark{font-size:10px;font-weight:700;text-anchor:middle;fill:#fff}
+.expstrip .expmark.dark{fill:#111}
+.expstrip rect.expcell{stroke:var(--line);stroke-width:1}
+/* These fills are the strip's own, not the .sev pill colours, and the reason
+   is the greyscale print. The pill palette's luminance does not track
+   severity - measured off a rendered page, critical 96, info 102, low 130,
+   high 147, medium 160 - so printed, an Info cell came out as dark as a
+   Critical one and the chart's tone said the opposite of its letters. On the
+   two hosts that are deliberate negative controls, that is the worst possible
+   place to be wrong. This ramp is monotonic: darkest is worst, lightest is
+   least. Hue still reads red/orange/yellow/blue/grey in colour.
+   TestTheExposureStripPaletteIsMonotonicInGreyscale holds the ordering. */
+.expstrip .expcell.critical{fill:#a32116}
+.expstrip .expcell.high{fill:#d4621a}
+.expstrip .expcell.medium{fill:#d4a017}
+.expstrip .expcell.low{fill:#8fb8d8}
+.expstrip .expcell.info{fill:#e2e2e2}
+/* An empty cell is drawn, not omitted: the grid is what makes a quiet row
+   legible as a row rather than as missing data. */
+.expstrip .expcell.empty{fill:none}
+.bandstrip{display:block;width:100%;max-width:600px;height:auto;margin:.8rem 0 .4rem}
+.bandstrip text{font:11px -apple-system,Segoe UI,Roboto,sans-serif;text-anchor:middle}
+.bandstrip rect.band{fill:none;stroke:var(--line);stroke-width:1}
+/* Only the band a scan landed in is filled, so there is no cross-band
+   greyscale ordering to get wrong - the position on the scale carries the
+   meaning, and every band is labelled with its letter and its range. */
+.bandstrip rect.band.achieved{stroke:var(--fg)}
+.bandstrip rect.band.achieved.band-F{fill:#c0392b}
+.bandstrip rect.band.achieved.band-C{fill:#e67e22}
+.bandstrip rect.band.achieved.band-B{fill:#d4a017}
+.bandstrip rect.band.achieved.band-A{fill:#2e7d32}
+.bandstrip rect.band.achieved.band-Aplus{fill:#2e7d32}
+.bandstrip rect.band.unreachable{fill:url(#band-na)}
+.bandstrip .bandink{stroke:var(--muted)}
+.bandstrip .bandletter{font-size:13px;font-weight:700;fill:#fff}
+.bandstrip .bandletter.dark{fill:#111}
+.bandstrip .bandletter.muted{fill:var(--muted)}
+/* The letter on the hatched band sits on top of diagonal lines, so it gets a
+   halo in the page background colour rather than competing with them. */
+.bandstrip .bandletter.onhatch{fill:var(--fg);paint-order:stroke;stroke:var(--bg);stroke-width:3px;stroke-linejoin:round}
+.bandstrip .bandrange{font-size:10px;fill:var(--muted)}
+.bandstrip .bandyou{font-size:10px;font-weight:600;fill:var(--fg)}
+.bandstrip .bandna{font-size:10px;fill:var(--muted);font-style:italic}
 .sev{font-weight:600;font-size:.8rem;text-transform:uppercase;white-space:nowrap}
 .sev.critical{color:#c0392b}.sev.high{color:#e67e22}.sev.medium{color:#d4a017}.sev.low{color:#3498db}.sev.info{color:var(--muted)}
 .sev::before{content:"\25CF  ";font-size:.9em}
@@ -467,6 +582,13 @@ traceable: a finding against a name cannot be re-checked without knowing which m
 <p class="facts">{{.CoverageNote}}</p>
 {{end}}
 
+{{if .ExposureRows}}
+<h2>Exposure map</h2>
+<p class="facts">{{.ExposureSentence}}</p>
+{{.ExposureStrip}}
+<p class="facts">{{.ExposureNote}}</p>
+{{end}}
+
 {{if .FixFirst}}
 <h2>Fix these first</h2>
 <ol class="fix">
@@ -513,7 +635,7 @@ request it &mdash; and executed nothing. No response body was inspected, parsed,
 {{range .Findings}}<tr>
 <td><span class="sev {{.Severity}}">{{.Severity}}</span></td>
 <td><span class="ruleid">{{.RuleID}}</span>{{range .CVEs}}<br><span class="pill">{{.}}</span>{{end}}{{range .UnconfirmedCVEs}}<br><span class="pill unconf">{{.ID}} &middot; unconfirmed</span>{{end}}</td>
-<td>{{.Title}}<span class="rem">{{.Detail}}</span><span class="rem"><strong>Fix:</strong> {{.Remediation}}</span>{{range .UnconfirmedCVEs}}<span class="rem"><strong>{{.ID}} is not confirmed here{{if .FixedIn}} (advisory says fixed in {{.FixedIn}}){{end}}:</strong> {{.Why}}</span>{{end}}</td>
+<td>{{.Title}}<span class="rem">{{.Detail}}</span>{{if .Evidence.Basis}}<span class="rem"><strong>Evidence:</strong> {{evidenceHTML .Evidence}}</span>{{end}}<span class="rem"><strong>Fix:</strong> {{.Remediation}}</span>{{range .UnconfirmedCVEs}}<span class="rem"><strong>{{.ID}} is not confirmed here{{if .FixedIn}} (advisory says fixed in {{.FixedIn}}){{end}}:</strong> {{.Why}}</span>{{end}}</td>
 <td>{{.Port}}</td>
 </tr>{{end}}
 </tbody></table>
@@ -524,6 +646,10 @@ request it &mdash; and executed nothing. No response body was inspected, parsed,
 {{else}}<p>No exposure findings on the scanned targets.</p>{{end}}
 
 <h2>How this grade was reached</h2>
+{{if .GradeBandStrip}}
+<p class="facts">{{.GradeBandSentence}}</p>
+{{.GradeBandStrip}}
+{{end}}
 <p class="facts">The grade is driven by the <strong>single worst finding</strong>, not by an average
 or a count &mdash; one critical exposure is one way in, and nine clean ports do not offset it. The
 first row that matches decides the result:</p>
@@ -549,6 +675,13 @@ absence of exposure.</p>
 observes which services are reachable, whether they require authentication, and their transport
 posture. It does not install software, does not require credentials, and cannot assess
 cross-tenant fabric isolation or hardware attestation &mdash; those need deeper tiers.</p>
+<p class="facts">Every finding below is therefore recorded at evidence level
+<strong>observed</strong>: seen from outside the host, once, at the time of the scan. Nothing here
+claims a configuration was read, a signature verified, or hardware attested &mdash; those are
+higher levels, and this tier cannot reach them. What does differ between findings is <em>how the
+service was identified</em>, which each finding states on its own Evidence line: a service that
+answered on its own API is a stronger identification than one identified only by a root page any
+web server would answer.</p>
 {{with .Params}}
 <table class="params">
 <tr><th>Probe timeout</th><td><code>-timeout {{.ProbeTimeout}}</code> &mdash; every port was given this long to answer and no longer, so &ldquo;no response&rdquo; above means &ldquo;silent for {{.ProbeTimeout}}&rdquo;.</td></tr>
