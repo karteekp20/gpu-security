@@ -267,6 +267,60 @@ exists before concluding otherwise:
 gh api repos/karteekp20/gpu-security/releases --jq '.[] | "\(.tag_name) draft=\(.draft)"'
 ```
 
+### v0.3.0 — prepared 2026-11-06, **not yet tagged**
+
+Cut because `v0.2.0` asserts a CVE it cannot support, and because the demo and
+the download had diverged. Both were found by building the released tag and
+running it against the live demo stack — not by reading the backlog, which
+showed every item as Done.
+
+| What `v0.2.0` does | Fixed on `main` by |
+| :-- | :-- |
+| Asserts **`CVE-2023-43654` against TorchServe 0.12.0**, which NVD bounds at `versionEndExcluding: 0.8.2` — refutable with `pip show torchserve` | PR #11, merged 2026-11-01 |
+| Cannot draw the **exposure map** that `demo.md` beat 3c tells the operator to point at | PR #15 |
+| No coverage bar, no grade band strip, no scan-parameters table | PRs #13, #14, #15 |
+| No `parameters`, `responded`, `evidence` or `cves_unconfirmed` in `report.json` | PRs #11, #13, #15 |
+| Re-resolves a hostname per dial, so a round-robin name is probed at a different machine port to port | PR #9 |
+
+```bash
+git tag -a v0.3.0 -F docs/release-notes/v0.3.0.md
+git push origin v0.3.0
+```
+
+Measured 2026-11-06 against the live stack, both binaries, same subnet:
+
+- [x] `make demo-up` 7.5s warm; `make demo` 16.3s — both match the documented
+      figures.
+- [x] Detection identical across `v0.2.0` and `main`: `F`, `40/100`, 254
+      requested, 15 responded, 13 with findings, severities `3/6/6/3/3`. This
+      release changes what the report *says it knows*, not what it finds, so
+      the demo evidence survives the upgrade.
+- [x] All three charts render from `main` (`covbar`, `expstrip`, `bandstrip`);
+      none render from `v0.2.0`.
+- [x] `RG-TORCHSERVE-001` asserts no CVE on `main` and carries
+      `cves_unconfirmed` with NVD's `0.8.2` verbatim.
+- [x] Evidence bases across the 21 findings: 8 `service_api`, 6 `port_only`,
+      4 `metrics_endpoint`, 2 `transport`, 1 `generic_path` (MLflow). **This
+      corrected the 2026-11-05 decision row, which said 14 `service_api`** —
+      the figures did not sum to 21 and nobody had added them up.
+- [x] `go build ./...` and `go test ./...` green on the release branch.
+- [ ] `make lint`, `make test-integration`, `make fuzz`, `make build-all` —
+      re-run these before tagging; they passed on `main` and this branch
+      touches docs plus the release notes only.
+- [ ] Post-tag: workflow green, release not a draft, `cosign verify-blob` over
+      a freshly downloaded artifact, `sha256sum -c SHA256SUMS`, and the
+      downloaded binary printing `ray-guard v0.3.0`.
+
+**The standing step this release adds.** A fix merged to `main` does not
+withdraw a claim from the artifact people download. G6 corrected the false CVE
+on 2026-11-01 and the release carried it for five days afterwards, while
+`docs/open-work.md` showed the item as **Done** — because "merged" and
+"shipped" were never distinguished anywhere. So: **when a change alters what
+the report claims — a rule title, a CVE assertion, a grade, a new report
+section the kit then describes — either cut a release or write down in
+`docs/open-work.md` that it is deliberately unreleased and why.** There is no
+test for this; the gap is between a merge and a tag, where nothing runs.
+
 ## After publishing
 
 - [ ] Point it at something real and log the result in

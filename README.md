@@ -48,8 +48,13 @@ make build
 ```
 
 Writes `report/report.json` and `report/report.html`. The HTML is self-contained — no external
-assets — so it opens on an air-gapped workstation and mails as one file. It carries the
-`-label` you passed and the host the scan ran from, so a report read a month later still says
+assets — so it opens on an air-gapped workstation and mails as one file. It carries the grade and
+why, a **coverage bar** showing what answered and the several ways the rest did not, an
+**exposure map** (one row per host that answered, one column per port probed — so the hosts that
+answered and raised nothing are visible beside the ones that did, which a findings list cannot
+show), the ranked fixes, the findings per host with the **evidence each rests on**, and the
+scoring scale with the band this scan landed in and the band this tier cannot award. It also records
+the `-label` you passed and the host the scan ran from, so a report read a month later still says
 which engagement it was and from which vantage — "three of twelve didn't answer" means something
 different when the answer is "you were on the wrong side of a firewall". To render a PDF
 (optional, uses local Chrome; the scanner itself needs nothing):

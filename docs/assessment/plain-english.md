@@ -207,7 +207,7 @@ exceptions — including for addresses that are publicly visible.
 The report is a single file that opens in any browser and prints cleanly. No
 login, no account, no portal. It is yours; we keep no copy of it.
 
-It has six parts, in this order.
+It has seven parts, in this order.
 
 ### 1. The grade
 
@@ -239,13 +239,42 @@ The rule: **we report what we saw, and we are explicit about what we did not
 see.** A tool that quietly reports "all clear" for machines it never reached is
 worse than no tool, and avoiding that has shaped a great deal of this product.
 
-### 3. Fix these first
+### 3. The exposure map
+
+A grid: one row per machine that answered, one column per door number we
+tried. Each square carries the worst thing found at that door, with a letter
+in it as well as a colour, so it survives a black-and-white print.
+
+This is the part that answers the question most people are actually holding,
+which is **does this thing just shout at everything?** A list of findings
+cannot answer it, because the machines that came back clean are not in a list
+of findings. Here they are — rows of empty squares, sitting beside the bad
+ones.
+
+On our own demo cluster two of the fifteen machines that answered raise
+nothing at all, and one of those is running the very software the worst finding
+on the report is about. It is bound so that nothing outside that machine can
+reach it, and the scan says nothing about it. Same software, same door number,
+same rule, opposite answer — because the only thing that differs is whether it
+can be reached from where we stood.
+
+Two honest limits, both printed on the chart itself:
+
+- **An empty square is not a locked door.** It means nothing we recognise
+  answered there and no finding was raised. A door can be open, answer
+  something we cannot identify, and still be blank here. Calling it "closed"
+  would be inventing a reassurance we never established.
+- **Big scans are trimmed.** Past forty machines the chart keeps the worst rows
+  and states in words how many it did not draw, because a trimmed chart that
+  does not admit it is worse than no chart.
+
+### 4. Fix these first
 
 The handful of items that matter most, in order, each with its fix. If you only
 read one section, read this one. If you only act on one section, act on this
 one.
 
-### 4. Why this matters
+### 5. Why this matters
 
 For the serious findings, a plain explanation split into four deliberately
 separate statements:
@@ -260,7 +289,7 @@ separate statements:
 Keeping those apart is intentional. The observation is a fact; the consequence
 is an interpretation. You are entitled to see which is which.
 
-### 5. The findings, machine by machine
+### 6. The findings, machine by machine
 
 One table per machine. Each row: severity, the rule's ID, what was seen, the
 door number, and the fix.
@@ -277,11 +306,27 @@ Every finding has a stable ID like `RG-RAY-001`. Fix it, re-run the scan, and
 you can point at the same ID being gone. That is what makes the report a work
 item rather than an opinion.
 
-### 6. How the grade was reached, and what the scan covered
+Each finding also records **how we identified the service**: whether the
+service's own API answered, or a conventional monitoring path, or only a
+generic web page that any web server would have answered, or nothing more than
+an open door. Two findings can carry the same severity and rest on very
+different evidence, and the one resting on less is the one worth spot-checking
+first. The report tells you which is which instead of leaving you to guess —
+and it prints the exact path it asked for, so you can re-run the request
+yourself.
+
+### 7. How the grade was reached, and what the scan covered
 
 The report prints the scoring table, so you can reconstruct the grade yourself
-rather than taking our word for it. **The worst single finding decides the
-grade** — first matching row wins:
+rather than taking our word for it. Above the table the same scale is drawn as
+a strip of bands with the one this scan landed in filled in — including the A+
+band, hatched and labelled *L3 only*, so you can see the grade that was not
+available rather than having to be told it exists. There is deliberately **no
+needle inside the band**: the scores below are representative of each band
+rather than measurements, so a pointer at "40 out of 100" would claim a
+precision we do not have.
+
+**The worst single finding decides the grade** — first matching row wins:
 
 | If | Score | Grade |
 | :-- | :-- | :-- |
