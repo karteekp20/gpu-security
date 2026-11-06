@@ -49,11 +49,13 @@ The identity checked here is this repository's release workflow, so a pass
 means the binary came out of a public build of that tag — not just that
 somebody signed something.
 
-**Which cosign version.** Verified end to end with **cosign v3.1.3** against a
-freshly downloaded artifact; 3.x detects the bundle format itself. cosign added
-new-bundle support to `verify-blob` in v2.4.0, so 2.4+ should work, but a 2.x
-client may need `--new-bundle-format` added to the command. We have not tested
-that, so we are not going to tell you it works.
+**Which cosign version.** Verified end to end against a freshly downloaded
+artifact on **cosign v3.1.3** and on **cosign v2.4.3** — 6 of 6 bundles
+`Verified OK` on each. Both detect the bundle format on their own: the command
+above is the whole command, and **`--new-bundle-format` is not needed on 2.4.3**.
+cosign added new-bundle support to `verify-blob` in v2.4.0, so earlier 2.4.x
+should behave the same, but those point releases are inference and not
+something we have run.
 
 ## Using this tool
 

@@ -239,8 +239,9 @@ false`, 12 assets: 4 binaries, 6 `.sigstore.json` bundles, `SHA256SUMS`,
       6/6 bundles `Verified OK` from a `gh release download` into an empty
       directory — the path a buyer takes, not the workflow's own self-check.
       Local client was **cosign v3.1.3**, which is the version every document
-      names as tested, so this confirms that claim and does **not** close the
-      2.x gap.
+      named as tested, so this confirmed that claim and did **not** close the
+      2.x gap. **The 2.x gap was closed separately on 2026-11-06** — see the
+      entry below.
 - [x] `sha256sum -c SHA256SUMS` passes (4/4 OK).
 - [x] The downloaded binary prints `ray-guard v0.2.0`.
 - [x] A scan of the demo stack still grades **F** with 21 findings, run with
@@ -266,6 +267,42 @@ exists before concluding otherwise:
 ```bash
 gh api repos/karteekp20/gpu-security/releases --jq '.[] | "\(.tag_name) draft=\(.draft)"'
 ```
+
+### The cosign 2.x verification gap — closed 2026-11-06
+
+Every document named **v3.1.3** as the only client we had actually run, and the
+2026-10-31 decision row went further: it suspected a 2.x client might *not*
+auto-detect our bundles, because cosign's own v2.6.0 examples pass
+`--new-bundle-format` explicitly on verify. That suspicion was never tested,
+and it sat in `SECURITY.md`, in the release workflow's body template and in two
+sets of release notes as a caveat a buyer reads right before deciding whether
+to trust us.
+
+Measured, against the **published `v0.2.0`** downloaded fresh into an empty
+directory:
+
+```bash
+cosign-2.4.3 verify-blob \
+  --bundle ray-guard-linux-amd64.sigstore.json \
+  --certificate-identity-regexp '^https://github.com/karteekp20/gpu-security/' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  ray-guard-linux-amd64
+```
+
+- **6/6 bundles `Verified OK` on cosign v2.4.3**, with the command exactly as
+  published — **no `--new-bundle-format`**. The suspicion was wrong; 2.4.3
+  auto-detects the bundle like 3.x does.
+- `sha256sum -c SHA256SUMS`: 4/4 OK. The downloaded binary prints
+  `ray-guard v0.2.0`.
+- **Negative control.** One byte flipped at offset 4096 in a copy of the
+  verified binary, same command: `invalid signature when validating ASN.1
+  encoded signature`, exit 1. Without this, six passes only prove the command
+  exits zero — not that it is checking anything.
+
+What is **not** claimed: only **v2.4.3** was run. Support landed in v2.4.0, so
+2.4.0–2.4.2 should behave the same, and that remains inference. Saying "2.4+"
+on the strength of one point release is the exact error the 2026-10-31 row was
+written about.
 
 ### v0.3.0 — merged 2026-11-06 as `97685b3`, **not yet tagged**
 

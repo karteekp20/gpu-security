@@ -121,10 +121,12 @@ jobs:
 
             **Which cosign.** This release's own workflow verifies every
             artifact with the cosign it pins (v3.1.4), which detects the bundle
-            format on its own. cosign added new-bundle support to `verify-blob`
-            in v2.4.0, so 2.4+ should work, but on a 2.x client you may need to
-            add `--new-bundle-format` - untested here, and we would rather say
-            so than have the command fail in front of you.
+            format on its own. The command above was also run by hand on
+            **cosign v2.4.3** against a freshly downloaded artifact - 6 of 6
+            bundles `Verified OK`, with no `--new-bundle-format` needed. cosign
+            added new-bundle support to `verify-blob` in v2.4.0, so earlier
+            2.4.x should behave the same; that part is inference, not something
+            we have run.
 
             Checksums are in `SHA256SUMS`; a CycloneDX SBOM ships as
             `sbom.cyclonedx.json`.

@@ -229,10 +229,17 @@ These are habits that found real defects, not ceremony:
   and `docs/publishing.md` says not to touch released tags.
 - `.claude/settings.local.json` still pre-approves the repo visibility flip,
   which has nothing left to use it for.
-- **Open verification gap needing a human:** whether a buyer on cosign 2.x can
-  verify our `v0.3` Sigstore bundles. `v0.2.0` was verified end to end with the
-  locally installed **cosign v3.1.3** (6/6 bundles, 4/4 checksums), which confirms
-  the tested claim but says nothing about 2.x. Closing it means one run of
-  `cosign v2.4.3 verify-blob --bundle` against a `v0.2.0` artifact. It matters
-  because the demo talk track tells the prospect to verify the release themselves,
-  so a 2.x client failing is a trust step failing live in the room.
+- ~~**Open verification gap needing a human:** whether a buyer on cosign 2.x
+  can verify our `v0.3` Sigstore bundles.~~ **Closed 2026-11-06.** Run against
+  the published `v0.2.0`, downloaded fresh into an empty directory:
+  **cosign v2.4.3 verified 6/6 bundles `Verified OK`** with the command exactly
+  as `SECURITY.md` prints it — **no `--new-bundle-format`** — plus 4/4
+  checksums and the binary printing `ray-guard v0.2.0`. A flipped byte was
+  rejected (`invalid signature … ASN.1`, exit 1), so the passes mean the
+  verifier was actually checking. **The 2026-10-31 row's suspicion was wrong**:
+  it inferred from cosign's v2.6.0 examples that a 2.x client might not
+  auto-detect our bundles, and 2.4.3 does. Only 2.4.3 was run; 2.4.0–2.4.2 are
+  still inference, and the four surfaces that print the caveat now say exactly
+  that. It mattered because the demo talk track tells the prospect to verify
+  the release themselves, so a 2.x client failing is a trust step failing live
+  in the room.
