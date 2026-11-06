@@ -267,7 +267,7 @@ exists before concluding otherwise:
 gh api repos/karteekp20/gpu-security/releases --jq '.[] | "\(.tag_name) draft=\(.draft)"'
 ```
 
-### v0.3.0 — prepared 2026-11-06, **not yet tagged**
+### v0.3.0 — merged 2026-11-06 as `97685b3`, **not yet tagged**
 
 Cut because `v0.2.0` asserts a CVE it cannot support, and because the demo and
 the download had diverged. Both were found by building the released tag and
@@ -282,8 +282,11 @@ showed every item as Done.
 | No `parameters`, `responded`, `evidence` or `cves_unconfirmed` in `report.json` | PRs #11, #13, #15 |
 | Re-resolves a hostname per dial, so a round-robin name is probed at a different machine port to port | PR #9 |
 
+PR #16 **squash**-merged, so the branch commits no longer exist on `main` and
+the tag goes on the squashed commit:
+
 ```bash
-git tag -a v0.3.0 -F docs/release-notes/v0.3.0.md
+git tag -a v0.3.0 -F docs/release-notes/v0.3.0.md 97685b3
 git push origin v0.3.0
 ```
 
@@ -304,9 +307,16 @@ Measured 2026-11-06 against the live stack, both binaries, same subnet:
       corrected the 2026-11-05 decision row, which said 14 `service_api`** —
       the figures did not sum to 21 and nobody had added them up.
 - [x] `go build ./...` and `go test ./...` green on the release branch.
-- [ ] `make lint`, `make test-integration`, `make fuzz`, `make build-all` —
-      re-run these before tagging; they passed on `main` and this branch
-      touches docs plus the release notes only.
+- [x] `make lint`, `make test`, `make fuzz`, `make build-all`,
+      `make test-integration` — all re-run on the merged `97685b3`, all green.
+      `go vet` 0 issues; the race suite green across all six packages; the
+      three fuzz targets (`FuzzExpandCIDR`, `FuzzApplyPortOverrides`,
+      `FuzzNormalizeTarget`) clean at the 60s budget each; the four-platform
+      matrix built with fresh `SHA256SUMS`; integration **15 passed, 0
+      failed** against the real stack. The one skip is `TestRealTritonIsDetected`
+      — `triton-real` is a 16GB image behind the `heavy` profile that CI does
+      not run either, so the skip is the expected result and not a gap opened
+      by this release.
 - [ ] Post-tag: workflow green, release not a draft, `cosign verify-blob` over
       a freshly downloaded artifact, `sha256sum -c SHA256SUMS`, and the
       downloaded binary printing `ray-guard v0.3.0`.

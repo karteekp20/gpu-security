@@ -6,7 +6,7 @@ re-deriving context. It is the *live backlog*. It is **not** a source of truth:
 outrank anything written here. If this file and a decision row disagree, the
 decision row wins and this file is wrong.
 
-**Last updated:** 2026-11-06 · **`main` at the time:** `f8cc81d` · **branch:** `release_v0.3.0`
+**Last updated:** 2026-11-06 · **`main` at the time:** `97685b3` · **branch:** `main`
 
 ---
 
@@ -15,9 +15,13 @@ decision row wins and this file is wrong.
 - Phase 0 is **built, published and released**. Public at
   <https://github.com/karteekp20/gpu-security>, `v0.2.0` signed with Sigstore
   bundles and verified over an unauthenticated download.
-- **`v0.3.0` is prepared and not tagged.** `v0.2.0` is five report features
-  behind `main` and asserts **`CVE-2023-43654` against TorchServe 0.12.0**,
-  which NVD bounds at `0.8.2` - the claim G6 removed on `main` on 2026-11-01
+- **`v0.3.0` is merged and not tagged.** PR #16 squash-merged to `main` as
+  `97685b3` on 2026-11-06; the tag does not exist yet, so **the artifact a
+  prospect downloads is still `v0.2.0`** and still carries the withdrawn claim.
+  This is the exact state the row below was written about: merged is not
+  shipped. `v0.2.0` is five report features behind `main` and asserts
+  **`CVE-2023-43654` against TorchServe 0.12.0**, which NVD bounds at
+  `0.8.2` - the claim G6 removed on `main` on 2026-11-01
   and that stayed in the downloadable artifact for five days while every row
   here said **Done**. It also cannot draw the exposure map that `demo.md` beat
   3c tells the operator to point at. Notes are written
@@ -83,7 +87,7 @@ Done). What is left is **release and surface work, not features**:
 
 | # | Item | Notes |
 | :-- | :-- | :-- |
-| R-1 | **Push the `v0.3.0` tag.** `git tag -a v0.3.0 -F docs/release-notes/v0.3.0.md && git push origin v0.3.0` | Owner's call - publishing is outward-facing and a Sigstore-logged release is immutable. Re-run `make lint`, `make test-integration`, `make fuzz`, `make build-all` first; the post-tag checklist is in `docs/publishing.md` |
+| R-1 | **Push the `v0.3.0` tag.** PR #16 was **squash**-merged, so the tag goes on the squashed commit: `git tag -a v0.3.0 -F docs/release-notes/v0.3.0.md 97685b3 && git push origin v0.3.0` | Owner's call - publishing is outward-facing and a Sigstore-logged release is immutable. **The preflight is done:** `lint`, `test`, `fuzz`, `build-all` and `test-integration` all re-run on `97685b3` 2026-11-06 and all green (integration 15 passed / 0 failed; the one skip is the 16GB `heavy`-profile Triton that CI does not run either). The post-tag checklist is in `docs/publishing.md` |
 | ~~R-2~~ | ~~**Re-publish the plain-English page.**~~ **Done 2026-11-06** - the shareable page at <https://claude.ai/artifact/KCzRtCE2fAgL1xUWiZeNAF> is at version 3 and now walks the reader through **seven** report sections, with the exposure map as §3, the evidence basis in the findings section and the band strip in the grade section. Source and page state the same claims again | Was the drift the housekeeping note predicted, in the direction nobody watches for: the page *under*-promised, omitting the most persuasive thing in the report. **The page is private** - if it is going to a prospect it has to be shared from its own Share menu first |
 | R-3 | **Decide `Demo_V1`'s fate.** `origin/Demo_V1` is at `94b78fd`, one commit behind `main`, and the missing commit is PR #15 - the charts | It drifted again within a day of being re-cut, which is the third time. The recommendation already on file is the right one: once `v0.3.0` is tagged, delete the branch and demo from the release tag, which cannot silently fall behind |
 
