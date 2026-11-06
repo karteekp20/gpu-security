@@ -304,7 +304,7 @@ What is **not** claimed: only **v2.4.3** was run. Support landed in v2.4.0, so
 on the strength of one point release is the exact error the 2026-10-31 row was
 written about.
 
-### v0.3.0 — merged 2026-11-06 as `97685b3`, **not yet tagged**
+### v0.3.0 — merged 2026-11-06, tagged from `main`
 
 Cut because `v0.2.0` asserts a CVE it cannot support, and because the demo and
 the download had diverged. Both were found by building the released tag and
@@ -319,13 +319,22 @@ showed every item as Done.
 | No `parameters`, `responded`, `evidence` or `cves_unconfirmed` in `report.json` | PRs #11, #13, #15 |
 | Re-resolves a hostname per dial, so a round-robin name is probed at a different machine port to port | PR #9 |
 
-PR #16 **squash**-merged, so the branch commits no longer exist on `main` and
-the tag goes on the squashed commit:
+PR #16 and PR #17 were both **squash**-merged, so no branch commit exists on
+`main` and the release is whatever `main`'s tip is once both have landed. A
+bare `git tag -a v0.3.0` tags whatever `HEAD` happens to be at the moment it
+runs, which is not something to find out afterwards: `cosign` logs the tag to a
+public transparency log and `docs/publishing.md` says not to move a released
+tag, so the first attempt is the only one. Read the commit, then name it:
 
 ```bash
-git tag -a v0.3.0 -F docs/release-notes/v0.3.0.md 97685b3
+git fetch origin
+git rev-parse origin/main          # read it; do not assume
+git tag -a v0.3.0 -F docs/release-notes/v0.3.0.md <that commit>
 git push origin v0.3.0
 ```
+
+The notes file is the tag message, so it must be the version on `main` —
+including the cosign 2.4.3 result, which landed in PR #17.
 
 Measured 2026-11-06 against the live stack, both binaries, same subnet:
 
