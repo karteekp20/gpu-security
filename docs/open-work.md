@@ -6,7 +6,7 @@ re-deriving context. It is the *live backlog*. It is **not** a source of truth:
 outrank anything written here. If this file and a decision row disagree, the
 decision row wins and this file is wrong.
 
-**Last updated:** 2026-11-06 · **`main` at the time:** `97685b3` · **branch:** `main`
+**Last updated:** 2026-11-06 · **`main` at the time:** `4dbccc9` · **branch:** `main` · **released:** `v0.3.0`
 
 ---
 
@@ -15,11 +15,15 @@ decision row wins and this file is wrong.
 - Phase 0 is **built, published and released**. Public at
   <https://github.com/karteekp20/gpu-security>, `v0.2.0` signed with Sigstore
   bundles and verified over an unauthenticated download.
-- **`v0.3.0` is merged and not tagged.** PR #16 squash-merged to `main` as
-  `97685b3` on 2026-11-06; the tag does not exist yet, so **the artifact a
-  prospect downloads is still `v0.2.0`** and still carries the withdrawn claim.
-  This is the exact state the row below was written about: merged is not
-  shipped. `v0.2.0` is five report features behind `main` and asserts
+- **`v0.3.0` is shipped.** Tagged at `4dbccc9` and published 2026-11-06,
+  signed and verified over a fresh unauthenticated-path download on **both
+  cosign v3.1.3 and v2.4.3** (6/6 each). The released binary was run against
+  the live demo stack: `F`, `40/100`, 21 findings, `3/6/6/3/3`, and
+  **`CVE-2023-43654` appears only under `cves_unconfirmed`** - so the
+  withdrawn claim is gone from the artifact people download, which is the
+  whole reason the release exists. Postflight is in `docs/publishing.md`.
+  For the record of what it replaced: `v0.2.0` was five report features
+  behind `main` and asserted
   **`CVE-2023-43654` against TorchServe 0.12.0**, which NVD bounds at
   `0.8.2` - the claim G6 removed on `main` on 2026-11-01
   and that stayed in the downloadable artifact for five days while every row
@@ -87,9 +91,9 @@ Done). What is left is **release and surface work, not features**:
 
 | # | Item | Notes |
 | :-- | :-- | :-- |
-| R-1 | **Push the `v0.3.0` tag.** PR #16 and #17 were both **squash**-merged, so no branch commit exists on `main`: resolve `origin/main` and name that commit rather than letting a bare `git tag` take whatever `HEAD` is - `git tag -a v0.3.0 -F docs/release-notes/v0.3.0.md <commit> && git push origin v0.3.0` | Owner's call - publishing is outward-facing and a Sigstore-logged release is immutable. **The preflight is done:** `lint`, `test`, `fuzz`, `build-all` and `test-integration` all re-run on `97685b3` 2026-11-06 and all green (integration 15 passed / 0 failed; the one skip is the 16GB `heavy`-profile Triton that CI does not run either). The post-tag checklist is in `docs/publishing.md` |
+| ~~R-1~~ | ~~**Push the `v0.3.0` tag.**~~ **Done 2026-11-06** - tagged at `4dbccc9`, published, workflow green, and verified end to end over a fresh download on cosign v3.1.3 **and** v2.4.3 | Preflight and postflight are both recorded in `docs/publishing.md`. The tag push took three attempts: GitHub rejected the first two with `Internal Server Error` with no ruleset or tag protection in play, so check `git ls-remote --tags origin` rather than assuming a rejection means the tag exists |
 | ~~R-2~~ | ~~**Re-publish the plain-English page.**~~ **Done 2026-11-06** - the shareable page at <https://claude.ai/artifact/KCzRtCE2fAgL1xUWiZeNAF> is at version 3 and now walks the reader through **seven** report sections, with the exposure map as §3, the evidence basis in the findings section and the band strip in the grade section. Source and page state the same claims again | Was the drift the housekeeping note predicted, in the direction nobody watches for: the page *under*-promised, omitting the most persuasive thing in the report. **The page is private** - if it is going to a prospect it has to be shared from its own Share menu first |
-| R-3 | **Decide `Demo_V1`'s fate.** `origin/Demo_V1` is at `94b78fd`, one commit behind `main`, and the missing commit is PR #15 - the charts | It drifted again within a day of being re-cut, which is the third time. The recommendation already on file is the right one: once `v0.3.0` is tagged, delete the branch and demo from the release tag, which cannot silently fall behind |
+| R-3 | **Delete `Demo_V1` and demo from the `v0.3.0` tag.** `origin/Demo_V1` is at `94b78fd`, now **three** commits behind `main` and missing PR #15 (the charts) as well as the release itself | **The precondition is met: `v0.3.0` is tagged.** This was always the recommendation on file, deferred only until a tag existed to demo from. The branch has drifted three times running; a tag cannot. `git push origin --delete Demo_V1` and `git branch -D Demo_V1`, then demo from `git checkout v0.3.0` or straight from the release download |
 
 None of those three is a feature, and that is deliberate. This is the state P2
 was written for: **the only thing that moves this project now is a buyer
@@ -175,6 +179,21 @@ These are habits that found real defects, not ceremony:
 - **There is no OPA on the dev machine.** Rego behaviour is verified by the
   `policy` CI job. Local Go checks are structural by design, so a Rego change
   must not be called verified until that job is green.
+- **The local Go toolchain is not the one that ships, and `go.mod` cannot make
+  it be.** Measured 2026-11-06 off the released artifact: this machine builds
+  with **go1.20.5** while `v0.3.0` was built by CI with **go1.27.3**. `go.mod`
+  says `go 1.22`, but only Go 1.21+ enforces that directive - on 1.20 it is
+  ignored and the module builds anyway, with 1.20's language version and
+  1.20's standard library. For this product that lands squarely on
+  **`crypto/x509` and `crypto/tls`**, which `RG-TLS-001/002/003` decide
+  findings from, so a green TLS test locally is a statement about whichever
+  standard library is installed here. `make build-all` now refuses on too old
+  a toolchain and `make build`/`make test` warn; **CI remains the authority
+  for anything that ships.** The loop-variable hazard that the same gap can
+  cause is *not* live here - every `go func` in `internal/` and `cmd/` shadows
+  its loop variable explicitly (`t := t`, `i, port := i, port`), so the code
+  means the same thing under 1.20 and 1.22+ semantics. That was checked, not
+  assumed.
 - **Regenerate corpora deliberately:**
   `RAY_GUARD_UPDATE_CORPUS=1 go test ./internal/scan -run 'TestRegoCorpusIsCurrent|TestRegoClosureCorpusIsCurrent'`
 - **Client output never enters this repo.** Reports go to `~/assessments/`

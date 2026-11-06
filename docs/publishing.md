@@ -304,7 +304,7 @@ What is **not** claimed: only **v2.4.3** was run. Support landed in v2.4.0, so
 on the strength of one point release is the exact error the 2026-10-31 row was
 written about.
 
-### v0.3.0 — merged 2026-11-06, tagged from `main`
+### v0.3.0 — **shipped** 2026-11-06, tag `v0.3.0` → `4dbccc9`
 
 Cut because `v0.2.0` asserts a CVE it cannot support, and because the demo and
 the download had diverged. Both were found by building the released tag and
@@ -372,9 +372,35 @@ Measured 2026-11-06 against the live stack, both binaries, same subnet:
       — `triton-real` is a 16GB image behind the `heavy` profile that CI does
       not run either, so the skip is the expected result and not a gap opened
       by this release.
-- [ ] Post-tag: workflow green, release not a draft, `cosign verify-blob` over
-      a freshly downloaded artifact, `sha256sum -c SHA256SUMS`, and the
-      downloaded binary printing `ray-guard v0.3.0`.
+- [x] **Post-tag, all measured 2026-11-06 after the tag push.** `Release`
+      workflow green (run `42314035409`); the release is published and **not a
+      draft**; 12 assets (6 artifacts + 6 bundles).
+- [x] `cosign verify-blob` over a **freshly downloaded** `v0.3.0`, into an
+      empty directory: **6/6 `Verified OK` on cosign v3.1.3 and 6/6 on cosign
+      v2.4.3**, the same command for both, no `--new-bundle-format`. Negative
+      control on 2.4.3 — one byte flipped at offset 4096 — rejected with
+      `invalid signature … ASN.1`, exit 1. So the 2.x claim now rests on
+      `v0.3.0` itself, not only on the `v0.2.0` run that first closed the gap.
+- [x] `sha256sum -c SHA256SUMS`: 4/4 OK. The downloaded binary prints
+      `ray-guard v0.3.0`.
+- [x] **The withdrawn claim is actually gone from the artifact people
+      download**, which is the entire reason this release exists. Scanned the
+      live demo stack with the **released** `ray-guard-linux-amd64`: `F`,
+      `40/100`, `tier: L1`, 254 requested, 15 responded, 21 findings,
+      severities `3/6/6/3/3` — identical to `v0.2.0`, so detection did not
+      move. `cves` asserts only `CVE-2023-48022`; **`CVE-2023-43654` now
+      appears only under `cves_unconfirmed`**, with NVD's `0.8.2` verbatim and
+      the `allowed_urls` check that settles it. Evidence bases 8 `service_api`,
+      6 `port_only`, 4 `metrics_endpoint`, 2 `transport`, 1 `generic_path`,
+      matching the corrected count. All three charts render; `report.html` is
+      52K, still an email attachment. Scan took 16.0s against the documented
+      16.3s.
+- [x] **The tag push needed three attempts.** The first two were rejected with
+      `Internal Server Error` and a GitHub request ID; the repo has no rulesets
+      and no tag protection, and the status page was clean, so it was
+      transient GitHub-side. Worth knowing before anyone concludes a rejected
+      tag push means the tag is somehow already taken — `git ls-remote --tags
+      origin` is the check.
 
 **The standing step this release adds.** A fix merged to `main` does not
 withdraw a claim from the artifact people download. G6 corrected the false CVE
