@@ -6,7 +6,7 @@ re-deriving context. It is the *live backlog*. It is **not** a source of truth:
 outrank anything written here. If this file and a decision row disagree, the
 decision row wins and this file is wrong.
 
-**Last updated:** 2026-11-05 · **`main` at the time:** `94b78fd` (+ uncommitted: G3, C2, C3, D-1)
+**Last updated:** 2026-11-06 · **`main` at the time:** `f8cc81d` · **branch:** `release_v0.3.0`
 
 ---
 
@@ -15,6 +15,15 @@ decision row wins and this file is wrong.
 - Phase 0 is **built, published and released**. Public at
   <https://github.com/karteekp20/gpu-security>, `v0.2.0` signed with Sigstore
   bundles and verified over an unauthenticated download.
+- **`v0.3.0` is prepared and not tagged.** `v0.2.0` is five report features
+  behind `main` and asserts **`CVE-2023-43654` against TorchServe 0.12.0**,
+  which NVD bounds at `0.8.2` - the claim G6 removed on `main` on 2026-11-01
+  and that stayed in the downloadable artifact for five days while every row
+  here said **Done**. It also cannot draw the exposure map that `demo.md` beat
+  3c tells the operator to point at. Notes are written
+  (`docs/release-notes/v0.3.0.md`), preflight is measured
+  (`docs/publishing.md`), the tag push is the owner's. See the 2026-11-06
+  decision row.
 - `main` is green on all four CI jobs (`build-and-test`, `golangci-lint`,
   `policy`, `supply-chain`). The nightly `Integration (real services)` job and
   its `fuzz` sibling are green.
@@ -61,27 +70,35 @@ review; C-items are chart work; D-items are decisions to record.**
 | R1 | **Hostnames are resolved once and pinned.** Every probe for a name dials the one address resolution chose; the report states it (`probed at 10.0.0.5`, `addresses` in the JSON) while the name stays in the URL, `Host` header, SNI and the x509 check. A name with several addresses discloses the unprobed ones and cannot earn a clean grade (`N/A`, exit 7). Verified end to end against a container with two A records for one name; both halves mutation-tested; the address is kept out of the P9 snapshot by its own guard | PR #9, `8565f37`. Was not on this list — found by reading the resolver path after a question about hostname input |
 | G6 | **CVE claims are split into asserted and unconfirmed.** `cves` now holds only CVEs whose condition is the condition we observed; a CVE whose advisory names a fixed version moves to `cves_unconfirmed` with that version and the check that settles it. `RG-TORCHSERVE-001` asserts none. Found a real false claim on the way: the demo stack asserted `CVE-2023-43654` against TorchServe **0.12.0**, which NVD records as fixed in **0.8.2**. The Ray pair was true only by luck - 2.9.0 is below 2.52.0, but the scanner never read the version. Grade unchanged (`F`, 40, 21 findings), which is the test that severity never rested on the CVE | PR #11, `23833c5` |
 | G8 | §3 now reads "Agentless, read-only **active** probe … (one benign GET per check plus a wildcard control; nothing is installed and no credentials are used)" | PR #5 |
-| G3 | **Findings carry the evidence they rest on.** An `evidence` block per finding: `level` (the data-model ladder, always `observed` at L1, stated so the ceiling is visible) and `basis` - `service_api` / `metrics_endpoint` / `generic_path` / `port_only` / `transport` - plus the `probed_path` that produced it, so a reader can re-run the request. The basis is **derived from the check table** rather than declared, so moving a probe path changes it and fails parity until the rule file agrees. Measured on the demo stack: 14 `service_api`, 4 `metrics_endpoint`, 6 `port_only`, 2 `transport`, and exactly **one `generic_path` - MLflow**, the case this row was written about. Grade unchanged (`F`, 40, 21 findings): evidence is new information, not a re-scoring. Five mutations, each failing its own gate. Also closes the two deck slides promising a confidence tier the report did not emit | `domain.Evidence`; `evidenceBasisForRule` in `detect.go`; all 19 `.rego` files; `internal/scan/evidence_test.go`; decision row 2026-11-05 |
+| G3 | **Findings carry the evidence they rest on.** An `evidence` block per finding: `level` (the data-model ladder, always `observed` at L1, stated so the ceiling is visible) and `basis` - `service_api` / `metrics_endpoint` / `generic_path` / `port_only` / `transport` - plus the `probed_path` that produced it, so a reader can re-run the request. The basis is **derived from the check table** rather than declared, so moving a probe path changes it and fails parity until the rule file agrees. Measured on the demo stack: 8 `service_api`, 6 `port_only`, 4 `metrics_endpoint`, 2 `transport`, and exactly **one `generic_path` - MLflow**, the case this row was written about. Grade unchanged (`F`, 40, 21 findings): evidence is new information, not a re-scoring. Five mutations, each failing its own gate. Also closes the two deck slides promising a confidence tier the report did not emit | `domain.Evidence`; `evidenceBasisForRule` in `detect.go`; all 19 `.rego` files; `internal/scan/evidence_test.go`; decision row 2026-11-05 |
 | C2 | **Host × port exposure strip.** One row per host that *answered*, one column per port probed, each cell the worst finding there with a severity letter as well as a colour. Required a new `domain.ScanResult.Responded`: the responded host list was never retained, so a host that answered and raised nothing was unrecoverable from the artifact - a reporting gap independent of the chart. Three things the build surfaced: the bucket rule has no port, so without a port-less column a public bucket drew as a *clean* host; the label column truncated by bytes, which splits a rune and emits invalid UTF-8 into an SVG; and the `.sev` pill palette is not monotonic in greyscale, so printed, an **Info cell was as dark as a Critical one** on two of the negative controls. The new field also opened a P9 route that needed its own structural guard. Six mutations | `internal/report/exposure.go`; `domain.ScanResult.Responded`; `internal/report/exposure_test.go`; `TestSnapshotCarriesNoRespondedHostIdentity`; demo beat 3c in `docs/assessment/demo.md`; decision row 2026-11-05 |
 | C3 | **Grade band strip**, above the G7 matrix. The §10.0 scale with the achieved band filled, the A+ band hatched and labelled *L3 only*, and every band carrying its letter and range as text. **No marker**: `gradeFor` returns a representative score per band, not a measurement, so a needle would claim precision we do not have. An inconclusive run draws nothing, because N/A is not a position on the scale. Moved the band table into code (`domain.GradeBands`), which closed a real gap - the ranges lived only in prose while `gradeFor` returned bare integers, so a score edited into the wrong band would have been silent. Two defects found by rendering: the achieved band drew unfilled (CSS specificity) and the A+ label was illegible over its hatch. Four mutations | `internal/report/gradeband.go`; `domain.GradeBands`/`BandFor`; `internal/report/gradeband_test.go`; decision row 2026-11-05 |
 | D-1 | **Decided: no DCGM body parsing before the gate.** `RG-DCGM-001` keeps deciding from the status code and discarding the body. The analysis found the prerequisite nobody had written down - the P3 denylist is made of *content* words, and `GPUModel`, `GPUUUID`, `Pod`, `Namespace`, `Utilization` tripped none of them, so the suite would have waved through the very data that makes this sensitive. `forbiddenIdentityFieldNames` now bars tenant identity from every boundary type, with its own message, and ships **ahead** of any parser rather than alongside one | `test/metadata_only_test.go`; decision row 2026-11-05 |
 
 ### Open
 
-**Nothing.** As of 2026-11-05 the engineering backlog from the external review
-is empty: G3 and the three charts are built, and D-1 was settled as a decision
-rather than built (see Done). Both are recorded in §18.
+The engineering backlog from the external review is empty: G3 and the three
+charts are built, and D-1 was settled as a decision rather than built (see
+Done). What is left is **release and surface work, not features**:
 
-This is the state P2 was written for. **The only thing that moves this project
-now is a buyer conversation** - the §14 gate is still `0/3` and `0/2`, and
+| # | Item | Notes |
+| :-- | :-- | :-- |
+| R-1 | **Push the `v0.3.0` tag.** `git tag -a v0.3.0 -F docs/release-notes/v0.3.0.md && git push origin v0.3.0` | Owner's call - publishing is outward-facing and a Sigstore-logged release is immutable. Re-run `make lint`, `make test-integration`, `make fuzz`, `make build-all` first; the post-tag checklist is in `docs/publishing.md` |
+| R-2 | **Re-publish the plain-English page.** `docs/assessment/plain-english.md` gained a seventh report section (the exposure map) plus the evidence basis and the band strip; the shareable page at <https://claude.ai/artifact/KCzRtCE2fAgL1xUWiZeNAF> is published from it and still describes six | This is the drift the housekeeping note below predicted, in the direction nobody watches for: the document now *under*-promises, omitting the most persuasive thing in the report. A client may already hold the old link |
+| R-3 | **Decide `Demo_V1`'s fate.** `origin/Demo_V1` is at `94b78fd`, one commit behind `main`, and the missing commit is PR #15 - the charts | It drifted again within a day of being re-cut, which is the third time. The recommendation already on file is the right one: once `v0.3.0` is tagged, delete the branch and demo from the release tag, which cannot silently fall behind |
+
+None of those three is a feature, and that is deliberate. This is the state P2
+was written for: **the only thing that moves this project now is a buyer
+conversation** - the §14 gate is still `0/3` and `0/2`, and
 `docs/assessment/outreach.md` is written and unused. Do not restock this list
 to pass the time; §4 below is the list of things that would be the wrong
 answer, and it is still correct.
 
-<!-- When a real item appears, restore the table:
-| # | Item | Notes |
-| :-- | :-- | :-- |
--->
+**"Done" here means merged, not shipped.** That distinction did not exist until
+2026-11-06 and its absence is what let a withdrawn CVE claim stay in the
+published release for five days. When a change alters what the report
+*claims*, either cut a release or record here that it is deliberately
+unreleased, and why.
 
 ### Chart constraints — non-negotiable, do not rediscover these
 
@@ -191,11 +208,14 @@ These are habits that found real defects, not ceremony:
   snapshot, because its name says "this is the demo".
 
   Moved to `main` (`94b78fd`); nothing was lost, since `a66fbdb` is an ancestor
-  of `main`. **`origin/Demo_V1` is still at `a66fbdb`** and needs one
-  `git push --force-with-lease origin Demo_V1` — until then a clone still gets
-  the stale demo. Re-cut it again whenever `main` moves; the underlying problem
-  is that a named snapshot branch drifts silently, so if that keeps happening,
-  delete it and demo from the release tag instead.
+  of `main`. Force-pushed to `origin` by the owner on 2026-11-05 — **and it was
+  stale again within the day.** `origin/Demo_V1` now sits at `94b78fd`, one
+  commit behind `main`, and the missing commit is PR #15: the evidence block and
+  the two charts, including the exposure map the demo script now tells the
+  operator to point at. That is three drifts in a row, which settles the
+  question this entry kept deferring — **delete the branch once `v0.3.0` is
+  tagged and demo from the release tag**, which cannot silently fall behind.
+  Tracked as R-3 above.
 - ~~A `v0.1.0` **draft** release~~ — deleted 2026-10-31. It was never published,
   was superseded by `v0.1.1`, and its 18 assets were signed in the **old
   detached `.sig`/`.pem` format**, which a current cosign cannot verify at all
