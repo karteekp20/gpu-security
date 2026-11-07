@@ -113,7 +113,7 @@ unreleased, and why.
 | Constraint | Why |
 | :-- | :-- |
 | **Inline SVG generated in Go** | No CDN, no external font, no JS library. `go.mod` has no `require` block; a chart library costs the zero-dependency air-gap binary (P4, §15) |
-| **Must print** | `make report-pdf` renders through local Chrome. SVG prints; canvas/JS often does not |
+| **Must print** | `make report-pdf` renders through local Chrome. SVG prints; canvas/JS often does not. **Exercised end to end 2026-11-07**, the first time since all three charts landed: the `v0.3.0` report rendered to an 8-page, 253KB PDF with the coverage bar and the exposure map both intact, letters legible in the cells and the hatched "no response" segment distinguishable from the solid one. A constraint nobody re-tests is a constraint that quietly stops holding |
 | **Never colour alone** | §7.6 accessibility rule, and reports print to greyscale |
 | **No implied precision** | No trend lines (one point in time; drift is Phase 2), no gauge needles on a provisional score |
 | **Small** | The report is an email attachment |

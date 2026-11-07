@@ -166,6 +166,14 @@ qualification: the control is not a quieter finding, it is **no finding on the
 software the whole pitch is about**. If only one chart gets looked at, make it
 this one.
 
+**If they ask what the *other* empty row is**, it is `172.31.77.1` — the Docker
+bridge gateway, the demo network's own router rather than a cluster host. Say
+that plainly; it is the honest answer and it costs nothing. Being caught
+mid-sentence by your own chart costs a good deal more, and this is the one
+chart you have just told them to photograph. Verified on the current stack
+2026-11-07: exactly two responders raise nothing, `.1` and `.41`, and `.41` is
+the `control-loopback` container.
+
 Those two containers exist in the integration suite as negative controls, and
 the tests assert they raise *nothing more* than that. Say that too — it is the
 difference between a demo and a sales pitch.
