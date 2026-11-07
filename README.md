@@ -170,11 +170,11 @@ only one of them is true.
 
 | Rule | Service | Severity |
 |---|---|---|
-| `RG-RAY-001` | Unauthenticated Ray dashboard / Jobs API (CVE-2023-48022, CVE-2025-62593) | critical |
+| `RG-RAY-001` | Unauthenticated Ray dashboard / Jobs API (asserts CVE-2023-48022; reports CVE-2025-62593 unconfirmed) | critical |
 | `RG-RAY-002` | Ray client port reachable | high |
 | `RG-VLLM-001` | Unauthenticated vLLM inference API | high |
 | `RG-TRITON-001` / `-003` / `-002` | Triton HTTP / gRPC / metrics exposure | high / medium / low |
-| `RG-TORCHSERVE-001` | Unauthenticated TorchServe management API (CVE-2023-43654, "ShellTorch") | critical |
+| `RG-TORCHSERVE-001` | Unauthenticated TorchServe management API (asserts **no** CVE; reports CVE-2023-43654, "ShellTorch", unconfirmed) | critical |
 | `RG-TORCHSERVE-002` | TorchServe metrics endpoint exposure | low |
 | `RG-SGLANG-001` | Unauthenticated SGLang inference API | high |
 | `RG-DCGM-001` | NVIDIA DCGM exporter publicly reachable (names the pod/namespace per GPU) | medium |
@@ -184,6 +184,16 @@ only one of them is true.
 | `RG-SLURM-001` | slurmctld reachable | medium |
 | `RG-BUCKET-001` | Object storage lists publicly | high |
 | `RG-TLS-001` | Certificate fails verification (self-signed / expired / mismatched) | medium |
+
+**Asserted versus unconfirmed.** `cves` in the report carries only CVEs whose
+condition is the condition the scan actually observed. A CVE whose advisory
+names a fixed version cannot be asserted at this tier — the scan decides every
+rule from a status code and reads no response bodies, so it never learns a
+version — and it moves to `cves_unconfirmed`, carrying that version verbatim
+and the check that would settle it. `RG-TORCHSERVE-001` asserts none: NVD
+bounds CVE-2023-43654 at `0.8.2` while the posture persists in later builds, so
+the citation is kept and the claim is not. The severity does not depend on the
+CVE either way.
 | `RG-TLS-002` | Authenticated service served over plaintext HTTP | medium |
 | `RG-TLS-003` | Obsolete TLS version negotiated (1.0 / 1.1, RFC 8996) | medium |
 | `RG-EXPOSURE-001` | Open port on an AI-infrastructure port, service unidentified | info |

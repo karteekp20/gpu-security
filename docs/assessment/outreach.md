@@ -56,8 +56,10 @@ the first email.
 > patch coming and network exposure is the entire control. The ShadowRay
 > campaign found those clusters by scanning the internet and used them to
 > mine crypto and steal credentials — nobody targeted those companies, they
-> were reachable. TorchServe has the same shape (CVE-2023-43654) and is
-> archived upstream, so "upgrade" is not a remediation there either. CSPM
+> were reachable. TorchServe has the same shape: its management API loads a
+> model from any URL, which is CVE-2023-43654 on older builds and still the
+> default posture on current ones, and upstream is archived, so "upgrade" is
+> not a remediation there either. CSPM
 > tools like Wiz don't look here; they need a cloud management API, and bare
 > metal doesn't have one.
 >
@@ -85,6 +87,17 @@ Why it is built this way:
   almost-true sentence that loses the room. The unpatchable framing is the
   stronger argument anyway: there is no version to upgrade to, so reachability
   is the whole control.
+- **Do not tell anyone a host is vulnerable to CVE-2023-43654.** NVD bounds
+  it at `0.8.2` and current images are well past that, so the flat claim is
+  refuted by one `pip show torchserve` — by the one audience that checks. What
+  persists is the **posture**, not the CVE: the 0.8.2 release added a startup
+  warning rather than changing the behaviour, and the official 0.12.0 image
+  still logs "can access any URL to load models" with `allowed_urls` unset and
+  the management port bound to 0.0.0.0. The scanner says exactly this —
+  `RG-TORCHSERVE-001` asserts no CVE and reports this one under
+  `cves_unconfirmed` with the version bound verbatim — so an email that
+  asserts it contradicts the report attached to it. Same failure as the
+  CISA-listing one above, and the reason `v0.3.0` was cut.
 - **Attribute the exposure counts.** "Oligo reported over 230,000 exposed Ray
   servers" is a citation; "I found 230,000" is a claim about work we have not
   done, and we do not scan prospects (see below).

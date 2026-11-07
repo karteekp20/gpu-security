@@ -93,7 +93,7 @@ Done). What is left is **release and surface work, not features**:
 | :-- | :-- | :-- |
 | ~~R-1~~ | ~~**Push the `v0.3.0` tag.**~~ **Done 2026-11-06** - tagged at `4dbccc9`, published, workflow green, and verified end to end over a fresh download on cosign v3.1.3 **and** v2.4.3 | Preflight and postflight are both recorded in `docs/publishing.md`. The tag push took three attempts: GitHub rejected the first two with `Internal Server Error` with no ruleset or tag protection in play, so check `git ls-remote --tags origin` rather than assuming a rejection means the tag exists |
 | ~~R-2~~ | ~~**Re-publish the plain-English page.**~~ **Done 2026-11-06** - the shareable page at <https://claude.ai/artifact/KCzRtCE2fAgL1xUWiZeNAF> is at version 3 and now walks the reader through **seven** report sections, with the exposure map as §3, the evidence basis in the findings section and the band strip in the grade section. Source and page state the same claims again | Was the drift the housekeeping note predicted, in the direction nobody watches for: the page *under*-promised, omitting the most persuasive thing in the report. **The page is private** - if it is going to a prospect it has to be shared from its own Share menu first |
-| R-3 | **Delete `Demo_V1` and demo from the `v0.3.0` tag.** `origin/Demo_V1` is at `94b78fd`, now **three** commits behind `main` and missing PR #15 (the charts) as well as the release itself | **The precondition is met: `v0.3.0` is tagged.** This was always the recommendation on file, deferred only until a tag existed to demo from. The branch has drifted three times running; a tag cannot. `git push origin --delete Demo_V1` and `git branch -D Demo_V1`, then demo from `git checkout v0.3.0` or straight from the release download |
+| ~~R-3~~ | ~~**Delete `Demo_V1` and demo from the `v0.3.0` tag.**~~ **Done 2026-11-07** - the branch is gone from `origin` and locally; demo from `git checkout v0.3.0` or straight from the release download, neither of which can silently fall behind | Three drifts in a row ended the question. The merged release branches (`release_v0.3.0`, `v030_preflight`, `v030_tag_target`, `v030_shipped`, `tls_classify_pin`) and `evidence_and_charts` are still on `origin` and can go the same way |
 
 None of those three is a feature, and that is deliberate. This is the state P2
 was written for: **the only thing that moves this project now is a buyer
@@ -221,8 +221,21 @@ These are habits that found real defects, not ceremony:
   published from it. Both carry the grade table, the ceiling (`A`, no `A+`), the
   ~30s-per-/24 bound and the do-not-claim list, which is exactly the set most
   likely to drift. Add them to the sweep whenever a rule title, a grade
-  threshold or a limit changes — the rev-9 pattern of a document promising what
-  the code does not do, with a page that a client may have already forwarded.
+  threshold, a **CVE assertion** or a limit changes — the rev-9 pattern of a
+  document promising what the code does not do, with a page that a client may
+  have already forwarded.
+
+  **The sweep is wider than those two.** `README.md`'s detection table,
+  `demo.md`'s talk track and `outreach.md`'s email also restate what the report
+  claims, and all three are what `v0.3.0` missed: the CVE was withdrawn where
+  the report is generated and left asserted in every place it is repeated
+  (decision row 2026-11-07). The whole check is one command, run against the
+  **shipped** report rather than `main`:
+
+  ```bash
+  grep -rn 'CVE-' README.md docs/assessment/
+  # then compare with cves / cves_unconfirmed in a report from the released binary
+  ```
 
 - ~~Merged branches not yet deleted~~ — done 2026-10-31: all nine merged
   branches deleted locally and on the remote (`rego_rule`,
