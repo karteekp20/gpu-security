@@ -194,6 +194,15 @@ These are habits that found real defects, not ceremony:
   its loop variable explicitly (`t := t`, `i, port := i, port`), so the code
   means the same thing under 1.20 and 1.22+ semantics. That was checked, not
   assumed.
+- **And then measured, rather than left as a worry.** Both binaries were run
+  against the same live demo stack: **21 findings, identical in every field of
+  every finding**, including the two `RG-TLS` detail strings, and identical in
+  every non-finding field. The divergence does not change output today. But
+  the demo fixtures exercise **one of five** certificate classes, and
+  `not-yet-valid` and `hostname-mismatch` had **no test anywhere** - so the
+  mapping is now pinned by `internal/scan/tls_classify_test.go`, which CI runs
+  on the toolchain that ships. The cheap version of this check is
+  `go version -m <binary> | head -1` on anything you are about to hand over.
 - **Regenerate corpora deliberately:**
   `RAY_GUARD_UPDATE_CORPUS=1 go test ./internal/scan -run 'TestRegoCorpusIsCurrent|TestRegoClosureCorpusIsCurrent'`
 - **Client output never enters this repo.** Reports go to `~/assessments/`
