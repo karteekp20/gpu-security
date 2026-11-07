@@ -19,7 +19,7 @@ GOFLAGS_STATIC := CGO_ENABLED=0
 GO_MOD_GO    := $(shell awk '/^go /{print $$2; exit}' go.mod)
 GO_INSTALLED := $(shell go env GOVERSION 2>/dev/null | sed 's/^go//')
 
-.PHONY: build build-all test test-p3 test-policies test-integration tls-fixture fuzz demo demo-up demo-down lint fmt run report-pdf sbom airgap-bundle clean toolchain-check toolchain-warn
+.PHONY: build build-all test test-p3 test-pipeline test-policies test-integration tls-fixture fuzz demo demo-up demo-down lint fmt run report-pdf sbom airgap-bundle clean toolchain-check toolchain-warn
 
 # The demo subnet is pinned in test/integration/docker-compose.yml.
 DEMO_SUBNET := 172.31.77.0/24
@@ -55,6 +55,11 @@ fuzz:
 		echo "  $$t"; \
 		go test ./internal/scan -run $$t -fuzz $$t -fuzztime $(FUZZTIME) || exit 1; \
 	done
+
+## test-pipeline: the Phase-0 gate counter and the anonymization that keeps
+## client names out of the public validation log. Stdlib python3, no deps.
+test-pipeline:
+	python3 docs/assessment/tools/pipeline_test.py
 
 ## test-policies: the Rego rule library (CLAUDE.md 8). Needs opa on PATH.
 ## The structural checks - both sentinel halves, metadata, a test per rule, no
