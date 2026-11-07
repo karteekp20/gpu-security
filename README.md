@@ -173,7 +173,9 @@ only one of them is true.
 | `RG-RAY-001` | Unauthenticated Ray dashboard / Jobs API (asserts CVE-2023-48022; reports CVE-2025-62593 unconfirmed) | critical |
 | `RG-RAY-002` | Ray client port reachable | high |
 | `RG-VLLM-001` | Unauthenticated vLLM inference API | high |
-| `RG-TRITON-001` / `-003` / `-002` | Triton HTTP / gRPC / metrics exposure | high / medium / low |
+| `RG-TRITON-001` | Unauthenticated NVIDIA Triton server | high |
+| `RG-TRITON-003` | Triton gRPC endpoint reachable | medium |
+| `RG-TRITON-002` | Triton metrics endpoint exposure | low |
 | `RG-TORCHSERVE-001` | Unauthenticated TorchServe management API (asserts **no** CVE; reports CVE-2023-43654, "ShellTorch", unconfirmed) | critical |
 | `RG-TORCHSERVE-002` | TorchServe metrics endpoint exposure | low |
 | `RG-SGLANG-001` | Unauthenticated SGLang inference API | high |
