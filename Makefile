@@ -8,17 +8,28 @@ PLATFORMS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64
 # security lead who will run it once, in 60 seconds (CLAUDE.md P4, 15).
 GOFLAGS_STATIC := CGO_ENABLED=0
 
-.PHONY: build build-all test test-p3 test-policies test-integration tls-fixture fuzz demo demo-up demo-down lint fmt run report-pdf sbom airgap-bundle clean
+# The `go` directive in go.mod is a minimum, but only Go 1.21 and later
+# enforce it. On an older toolchain the directive is ignored and the module
+# builds anyway - with that toolchain's language version and, more to the
+# point for a security scanner, that toolchain's crypto/x509 and crypto/tls.
+# The TLS rules decide findings from x509 verification errors, so "it passed
+# locally" is a claim about whichever standard library is installed here, not
+# about the one CI ships. Measured 2026-11-06: this machine was on go1.20.5
+# while the release that shipped was built by CI on go1.27.3.
+GO_MOD_GO    := $(shell awk '/^go /{print $$2; exit}' go.mod)
+GO_INSTALLED := $(shell go env GOVERSION 2>/dev/null | sed 's/^go//')
+
+.PHONY: build build-all test test-p3 test-policies test-integration tls-fixture fuzz demo demo-up demo-down lint fmt run report-pdf sbom airgap-bundle clean toolchain-check toolchain-warn
 
 # The demo subnet is pinned in test/integration/docker-compose.yml.
 DEMO_SUBNET := 172.31.77.0/24
 FUZZTIME ?= 60s
 
-build:
+build: toolchain-warn
 	$(GOFLAGS_STATIC) go build -ldflags '$(LDFLAGS)' -o bin/$(BINARY) ./cmd/$(BINARY)
 
 ## build-all: cross-compile the release matrix into bin/
-build-all:
+build-all: toolchain-check
 	@mkdir -p bin
 	@for p in $(PLATFORMS); do \
 		os=$${p%/*}; arch=$${p#*/}; \
@@ -28,7 +39,7 @@ build-all:
 	done
 	@cd bin && sha256sum $(BINARY)-* > SHA256SUMS
 
-test:
+test: toolchain-warn
 	go test -race ./...
 
 ## test-p3: the metadata-only enforcement suite (CLAUDE.md P3). Never skip.
@@ -148,6 +159,33 @@ sbom:
 ## airgap-bundle: signed offline update bundle. Phase 1 (CLAUDE.md 13).
 airgap-bundle:
 	@echo "not built yet: the signed air-gap manifest lands with the rule library in Phase 1 (CLAUDE.md 13, 14)"
+
+## toolchain-check: refuse to produce release artifacts on a toolchain older
+## than go.mod's `go` directive. Hard failure, because build-all is what the
+## release workflow runs and what a hand-cut release would run: a binary
+## handed to anyone must not be built by a standard library nobody tested it
+## against. `make build`, `make test` and the demo only warn - they are the
+## dev loop, and blocking them would be a worse trade than knowing.
+toolchain-check:
+	@if [ -z "$(GO_INSTALLED)" ]; then \
+		echo "cannot determine the Go version (go env GOVERSION returned nothing)"; exit 1; \
+	fi; \
+	if [ "$$(printf '%s\n%s\n' '$(GO_MOD_GO)' '$(GO_INSTALLED)' | sort -V | head -1)" != "$(GO_MOD_GO)" ]; then \
+		echo "go $(GO_INSTALLED) is older than go.mod's go $(GO_MOD_GO), and Go 1.20 and"; \
+		echo "earlier do not enforce that directive - this would build quietly against"; \
+		echo "the wrong standard library. Refusing to cross-compile release artifacts."; \
+		echo "Install Go $(GO_MOD_GO) or newer, or let the release workflow build them."; \
+		exit 1; \
+	fi
+
+toolchain-warn:
+	@if [ -n "$(GO_INSTALLED)" ] && \
+	   [ "$$(printf '%s\n%s\n' '$(GO_MOD_GO)' '$(GO_INSTALLED)' | sort -V | head -1)" != "$(GO_MOD_GO)" ]; then \
+		echo "  !! go $(GO_INSTALLED) < go.mod's go $(GO_MOD_GO). Go <=1.20 ignores that"; \
+		echo "  !! directive, so this builds and tests against $(GO_INSTALLED)'s standard"; \
+		echo "  !! library - including crypto/x509, which the TLS rules read. CI is the"; \
+		echo "  !! authority for anything that ships. 'make build-all' will refuse."; \
+	fi
 
 clean:
 	rm -rf bin report
