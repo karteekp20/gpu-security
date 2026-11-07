@@ -45,6 +45,12 @@ jobs:
       - name: Unit tests
         run: go test -race ./...
 
+      # The gate counter decides when Phase 1 starts, and its markdown output
+      # lands in docs/validation-log.md in this public repository. Neither had
+      # a test. Stdlib Python, no setup step needed.
+      - name: Pipeline gate and anonymization
+        run: python3 docs/assessment/tools/pipeline_test.py
+
       # P3 is the guarantee the product is sold on. It gets its own step so a
       # failure here is unmistakable in the checks list, never buried in a
       # general test run (CLAUDE.md P3, 17).
