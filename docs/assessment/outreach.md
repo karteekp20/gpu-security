@@ -49,8 +49,8 @@ the first email.
 > similar, plus GPU telemetry that quietly lists which tenant is on which GPU.
 >
 > The reason I'm writing now: CISA added the Ray RCE (CVE-2025-62593) to its
-> Known Exploited Vulnerabilities catalogue on 17 August 2026, with a
-> three-day federal remediation deadline. The older Ray issue
+> Known Exploited Vulnerabilities catalogue on 17 August 2026, giving federal
+> agencies until 20 August to remediate — three days. The older Ray issue
 > (CVE-2023-48022) matters more for a GPU fleet, though: Ray's maintainers
 > classify it as intended behaviour on a trusted network, so there is no
 > patch coming and network exposure is the entire control. The ShadowRay
@@ -82,7 +82,13 @@ Why it is built this way:
 - **Do not describe CVE-2023-48022 as CISA-listed.** It is not in the KEV
   catalogue, and it cannot be — it is the one the maintainers call intended
   behaviour, which is why there is no patch. Verified against CISA's feed
-  (`known_exploited_vulnerabilities.json`), not a vendor blog. A security
+  (`known_exploited_vulnerabilities.json`), not a vendor blog. **Re-checked
+  2026-11-07** against catalogue version `2026.11.06`, 1,769 entries:
+  `CVE-2025-62593` is listed as Ray-Project / Ray, `dateAdded 2026-08-17`,
+  `dueDate 2026-08-20`; `CVE-2023-48022` and `CVE-2023-43654` are both absent,
+  and `CVE-2025-62593` is the only Ray entry in the whole catalogue. Re-check
+  before a send if this date has gone stale — it is one `curl` and the email's
+  whole hook rests on it. A security
   lead is the one audience who checks, and this is exactly the kind of
   almost-true sentence that loses the room. The unpatchable framing is the
   stronger argument anyway: there is no version to upgrade to, so reachability
