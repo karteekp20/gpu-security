@@ -1,6 +1,8 @@
 package test
 
 import (
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -190,5 +192,115 @@ func TestCosignInstallerPinsTheBinaryItInstalls(t *testing.T) {
 	}
 	if !seen {
 		t.Skip("no workflow installs cosign; nothing to pin")
+	}
+}
+
+// Zero dependencies (CLAUDE.md P4, §15; README's headline claim).
+//
+// This is the most load-bearing constraint in the repository and the easiest
+// one to break by accident: a single `go get` adds a require block and
+// everything still builds, still tests, still passes CI. Nothing would have
+// failed.
+//
+// What rests on it: the static air-gap binary a security lead can be handed
+// (P4); OPA staying out of the scanner and the rule library being duplicated
+// in Go instead (internal/scan/rule_parity_test.go); no Go PDF library, so
+// `make report-pdf` shells out to Chrome (decision row 2026-09-20); charts
+// hand-generated as inline SVG rather than drawn by a chart library (the
+// chart constraints in docs/open-work.md). Each of those costs real effort
+// and each is paid for by this property. It should not be possible to spend
+// it without noticing.
+//
+// The check is the imports rather than only go.mod, because that is the
+// property that actually matters and it survives a `replace` or a vendor
+// directory, both of which can satisfy a build while go.mod still looks
+// clean.
+
+// TestGoModDeclaresNoDependencies is the cheap half: the file a reader opens
+// to check the claim must still support it.
+func TestGoModDeclaresNoDependencies(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("..", "go.mod"))
+	if err != nil {
+		t.Fatalf("reading go.mod: %v", err)
+	}
+	for i, line := range strings.Split(string(b), "\n") {
+		f := strings.Fields(strings.TrimSpace(line))
+		if len(f) == 0 || strings.HasPrefix(f[0], "//") {
+			continue
+		}
+		switch f[0] {
+		case "require", "replace", "exclude":
+			t.Errorf("go.mod:%d begins a %q directive. ray-guard ships as a "+
+				"zero-dependency static binary - that is what makes it handable to a "+
+				"security lead and runnable on an air-gapped host (P4, §15), and it is "+
+				"why OPA is not in the scanner, why there is no PDF library, and why "+
+				"the charts are hand-written SVG. If this is deliberate, it is a "+
+				"decision-log row, not a commit", i+1, f[0])
+		}
+	}
+	if _, err := os.Stat(filepath.Join("..", "go.sum")); err == nil {
+		t.Error("go.sum exists. With no dependencies there is nothing to check sums " +
+			"for, so its presence means something was added")
+	}
+}
+
+// TestNothingImportsAThirdPartyPackage is the half that cannot be satisfied
+// by a tidy go.mod. Every import in the module must be the standard library
+// or our own module - test files included, because a test-only dependency
+// still puts a require block in the file a buyer reads.
+func TestNothingImportsAThirdPartyPackage(t *testing.T) {
+	const self = "gpusecurity/"
+	var checked int
+
+	err := filepath.Walk("..", func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			switch info.Name() {
+			case ".git", "bin", "report", "node_modules", "vendor":
+				// vendor/ is skipped for walking and caught below: its mere
+				// existence is the finding.
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") {
+			return nil
+		}
+		f, perr := parser.ParseFile(token.NewFileSet(), path, nil, parser.ImportsOnly)
+		if perr != nil {
+			t.Errorf("parsing %s: %v", path, perr)
+			return nil
+		}
+		checked++
+		for _, spec := range f.Imports {
+			imp := strings.Trim(spec.Path.Value, `"`)
+			if strings.HasPrefix(imp, self) {
+				continue
+			}
+			// A standard-library path's first element never contains a dot;
+			// a module path's always does (example.com/..., github.com/...).
+			if first, _, _ := strings.Cut(imp, "/"); !strings.Contains(first, ".") {
+				continue
+			}
+			t.Errorf("%s imports %q, which is neither the standard library nor this "+
+				"module. The zero-dependency static binary is a product requirement "+
+				"(P4, §15), not a preference", strings.TrimPrefix(path, "../"), imp)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walking the module: %v", err)
+	}
+	// Guard the guard: a walk that silently found nothing would pass.
+	if checked < 10 {
+		t.Errorf("only %d Go files were inspected; the walk is not reaching the "+
+			"module and this test is not checking anything", checked)
+	}
+	if _, err := os.Stat(filepath.Join("..", "vendor")); err == nil {
+		t.Error("a vendor/ directory exists. Vendored code is a dependency that does " +
+			"not show up in go.mod, which is exactly the way this property gets spent " +
+			"without anyone noticing")
 	}
 }
