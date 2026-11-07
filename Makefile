@@ -127,9 +127,17 @@ lint:
 		echo "gofmt needed in:"; echo "$$unformatted"; exit 1; \
 	fi
 	go vet ./...
-	@command -v golangci-lint >/dev/null 2>&1 \
-		&& golangci-lint run \
-		|| echo "golangci-lint not installed; ran gofmt + go vet only"
+# `cmd && run || echo` cannot tell "not installed" from "installed and
+# reported issues": the || arm catches both, so a real lint failure printed
+# the not-installed message and `make lint` exited 0. Found 2026-11-07 when a
+# genuine unused-field finding was reported that way. if/else lets the
+# linter's own exit status fail the target, which is the entire point of a
+# pre-push gate.
+	@if command -v golangci-lint >/dev/null 2>&1; then \
+		golangci-lint run; \
+	else \
+		echo "golangci-lint not installed; ran gofmt + go vet only"; \
+	fi
 
 fmt:
 	gofmt -w .

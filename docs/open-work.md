@@ -176,6 +176,10 @@ These are habits that found real defects, not ceremony:
   TorchServe falsified two claims a rule was making; real Triton corrected a
   fix's first design; real Ray's `/api/version` was chosen over `/api/jobs/`
   only because the response was measured.
+- **`make lint` exits 0 only if it really passed** - as of 2026-11-07. Before
+  that it printed "golangci-lint not installed" when the linter *was*
+  installed and had reported issues, and returned success. If you are reading
+  an older note that says lint was green, it is worth re-running.
 - **There is no OPA on the dev machine.** Rego behaviour is verified by the
   `policy` CI job. Local Go checks are structural by design, so a Rego change
   must not be called verified until that job is green.
