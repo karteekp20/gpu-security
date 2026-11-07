@@ -237,6 +237,12 @@ These are habits that found real defects, not ceremony:
   # then compare with cves / cves_unconfirmed in a report from the released binary
   ```
 
+  **`README.md`'s table no longer needs that sweep** - `make test` fails if it
+  drifts from the rule set on IDs, severities, or an asserted-versus-unconfirmed
+  CVE (`internal/scan/readme_parity_test.go`, decision row 2026-11-07). The
+  three assessment documents still do: they are prose, and prose is not
+  checkable without making it stop being prose.
+
 - ~~Merged branches not yet deleted~~ — done 2026-10-31: all nine merged
   branches deleted locally and on the remote (`rego_rule`,
   `rego_rule_differential`, `rego_rule_closures`, `ray_evidence_path`,
