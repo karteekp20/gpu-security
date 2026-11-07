@@ -112,8 +112,15 @@ Then point at the second critical, because one example is a bug and two are a
 pattern:
 
 > "And here's the same shape again in a completely different project.
-> TorchServe's management API registers a model from any URL you hand it —
-> that's CVE-2023-43654, ShellTorch. TorchServe does enforce a token by
+> TorchServe's management API registers a model from any URL you hand it. The
+> report names CVE-2023-43654 — ShellTorch — and puts it under *unconfirmed*,
+> so let me be exact about why. NVD bounds that CVE at 0.8.2 and this host is
+> on 0.12.0, so I'm not going to tell you it's vulnerable to it. What 0.8.2
+> added was a startup warning, not a behaviour change: this container still
+> logs 'can access any URL to load models' on boot. The thing that settles it
+> is `allowed_urls` in config.properties, and an outside scan can't read that.
+> So you get the citation, the version bound, and the one command that
+> answers it — not a claim I can't support. TorchServe does enforce a token by
 > default now, and this one has it switched off, which is a flag that exists
 > because teams turn it off. Worth knowing: the official TorchServe container
 > binds inference, management, metrics and both gRPC ports to 0.0.0.0 in its
@@ -122,6 +129,13 @@ pattern:
 > coming; the only durable control is keeping it off the network. That's the
 > blind spot: not one CVE, but AI infrastructure shipping control planes that
 > assume a trusted network and then getting deployed on one that isn't."
+
+**Say the version bound before they look it up.** A technical prospect checks
+a CVE, and `pip show torchserve` refutes a flat ShellTorch claim in about ten
+seconds. Volunteering the bound costs one sentence and converts the weakest
+moment in the demo into the one that demonstrates the tool does not overclaim
+— which is the whole argument for trusting the other twenty findings. This is
+also why `v0.3.0` exists: `v0.2.0` asserted that CVE in the report itself.
 
 **3b. The DCGM finding, if the room is technical.** It is the one that is
 *only* about GPUs:
@@ -165,6 +179,14 @@ That is the strongest version of the argument available, and it needs no
 qualification: the control is not a quieter finding, it is **no finding on the
 software the whole pitch is about**. If only one chart gets looked at, make it
 this one.
+
+**If they ask what the *other* empty row is**, it is `172.31.77.1` — the Docker
+bridge gateway, the demo network's own router rather than a cluster host. Say
+that plainly; it is the honest answer and it costs nothing. Being caught
+mid-sentence by your own chart costs a good deal more, and this is the one
+chart you have just told them to photograph. Verified on the current stack
+2026-11-07: exactly two responders raise nothing, `.1` and `.41`, and `.41` is
+the `control-loopback` container.
 
 Those two containers exist in the integration suite as negative controls, and
 the tests assert they raise *nothing more* than that. Say that too — it is the
